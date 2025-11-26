@@ -1,0 +1,7 @@
+{
+  "name": "GTM Command Center",
+  "description": "A personal Go-To-Market command center for managing startups, ICPs, leads, and pipelines with AI-powered enrichment.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
