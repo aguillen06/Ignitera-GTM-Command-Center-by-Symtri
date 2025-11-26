@@ -1,11 +1,10 @@
 
-
 import React, { useState, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Startup, Lead, LeadStage, LEAD_STAGES, ICPProfile } from './types';
 import { supabase } from './services/supabase';
 import { findProspects, generateOutboundDraft } from './services/gemini';
-import { Plus, ArrowRight, Layout, Users, PieChart, Globe, Search, Filter, ChevronLeft, Sparkles, Loader2, Zap, Clipboard } from 'lucide-react';
+import { Plus, ArrowRight, Layout, Users, PieChart, Globe, Search, Filter, ChevronLeft, Sparkles, Loader2, Zap, Clipboard, Trash2, Command, Hexagon, LogOut } from 'lucide-react';
 
 // Components
 import ICPGenerator from './components/ICPGenerator';
@@ -13,21 +12,63 @@ import LeadDetail from './components/LeadDetail';
 import PipelineView from './components/PipelineView';
 import VoiceAssistant from './components/VoiceAssistant';
 import QuickCapture from './components/QuickCapture';
+import { Auth } from './components/Auth';
 
 const App = () => {
+  const [session, setSession] = useState<any>(null);
   const [view, setView] = useState<'list' | 'workspace'>('list');
   const [selectedStartup, setSelectedStartup] = useState<Startup | null>(null);
   const [startups, setStartups] = useState<Startup[]>([]);
   const [isCreatingStartup, setIsCreatingStartup] = useState(false);
   
-  // App Initialization
+  // Workspace State
+  const [activeTab, setActiveTab] = useState<'market' | 'leads' | 'pipeline'>('market');
+  
+  // Leads State
+  const [leads, setLeads] = useState<Lead[]>([]);
+  const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
+  const [leadFilter, setLeadFilter] = useState<LeadStage | 'All'>('All');
+  const [isAutoProspecting, setIsAutoProspecting] = useState(false);
+  
+  // Quick Capture State
+  const [showQuickCapture, setShowQuickCapture] = useState(false);
+
+  // App Initialization & Auth Check
   useEffect(() => {
-    fetchStartups();
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
+
+  useEffect(() => {
+    if (session) {
+        fetchStartups();
+    }
+  }, [session]);
+
+  useEffect(() => {
+    if (selectedStartup) {
+        fetchLeads();
+    }
+  }, [selectedStartup]);
 
   const fetchStartups = async () => {
     const { data } = await supabase.from('startups').select('*').order('created_at', { ascending: false });
     if (data) setStartups(data as Startup[]);
+  };
+
+  const fetchLeads = async () => {
+    if (!selectedStartup) return;
+    const { data } = await supabase.from('leads').select('*').eq('startup_id', selectedStartup.id).order('created_at', { ascending: false });
+    if (data) setLeads(data as Lead[]);
   };
 
   const handleCreateStartup = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -48,74 +89,229 @@ const App = () => {
     }
   };
 
+  const handleDeleteStartup = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    if (!confirm("Are you sure you want to delete this startup? This will delete all associated leads and strategies.")) return;
+
+    const { error } = await supabase.from('startups').delete().eq('id', id);
+    if (!error) {
+        setStartups(startups.filter(s => s.id !== id));
+        if (selectedStartup?.id === id) {
+            setSelectedStartup(null);
+            setView('list');
+        }
+    }
+  };
+
+  const handleCreateLead = async () => {
+    if (!selectedStartup) return;
+    const newLead = {
+        startup_id: selectedStartup.id,
+        contact_name: 'To be identified',
+        title: 'Target Decision Maker',
+        company_name: 'Target Company',
+        stage: 'Prospect' as LeadStage
+    };
+    
+    const { data } = await supabase.from('leads').insert([newLead]).select().single();
+    if (data) {
+        setLeads([data, ...leads]);
+        setSelectedLead(data);
+    }
+  };
+
+  const handleSaveLead = (leadData: Partial<Lead>) => {
+    if (!selectedStartup) return;
+    // If coming from Quick Capture, we need to insert
+    const payload = { ...leadData, startup_id: selectedStartup.id, stage: 'Prospect' };
+    
+    supabase.from('leads').insert([payload]).select().single().then(({ data }) => {
+        if (data) setLeads([data, ...leads]);
+    });
+  };
+
+  const handleAutoProspect = async () => {
+    if (!selectedStartup) return;
+    setIsAutoProspecting(true);
+    
+    try {
+        // 1. Get Active ICP
+        const { data: icps } = await supabase.from('icp_profiles').select('*').eq('startup_id', selectedStartup.id).limit(1);
+        if (!icps || icps.length === 0) {
+            alert("No ICP Profile found. Please go to 'Market & ICP' and generate a strategy first.");
+            setIsAutoProspecting(false);
+            return;
+        }
+        
+        const activeICP = icps[0] as ICPProfile;
+
+        // 2. Call Gemini
+        const prospects = await findProspects(activeICP);
+        
+        // 3. Insert Leads
+        const newLeads = [];
+        for (const p of prospects) {
+             const payload = {
+                startup_id: selectedStartup.id,
+                contact_name: "To be identified",
+                title: "Target Decision Maker",
+                company_name: p.company_name,
+                website: p.website,
+                industry: p.industry,
+                account_summary: p.account_summary,
+                stage: 'Prospect',
+                icp_fit: 'Medium',
+                source: 'AI Auto-Prospect'
+             };
+             const { data } = await supabase.from('leads').insert([payload]).select().single();
+             if (data) newLeads.push(data);
+        }
+
+        setLeads([...newLeads, ...leads]);
+        alert(`Successfully added ${newLeads.length} new companies to the pipeline.`);
+
+    } catch (e) {
+        console.error(e);
+        alert("Failed to auto-prospect. Check API limits.");
+    } finally {
+        setIsAutoProspecting(false);
+    }
+  };
+  
+  const handleBulkDrafts = async () => {
+      if (!selectedStartup) return;
+      const confirmRun = confirm("This will generate generic cold emails for all 'Prospect' stage leads. Continue?");
+      if (!confirmRun) return;
+
+      const prospects = leads.filter(l => l.stage === 'Prospect');
+      if (prospects.length === 0) {
+          alert("No leads in 'Prospect' stage.");
+          return;
+      }
+
+      // Get ICP
+      const { data: icps } = await supabase.from('icp_profiles').select('*').eq('startup_id', selectedStartup.id).limit(1);
+      const activeICP = icps?.[0] as ICPProfile;
+
+      let count = 0;
+      for (const lead of prospects) {
+          try {
+              const draft = await generateOutboundDraft(lead, selectedStartup, activeICP, 'email');
+              const active_draft = { ...draft, type: 'email', generated_at: new Date().toISOString() };
+              
+              await supabase.from('leads').update({ active_draft }).eq('id', lead.id);
+              
+              setLeads(current => current.map(l => l.id === lead.id ? { ...l, active_draft } : l));
+              count++;
+          } catch(e) { console.error(e); }
+      }
+      alert(`Generated drafts for ${count} leads.`);
+  };
+
+  const handleLogout = async () => {
+      await supabase.auth.signOut();
+  };
+
+  if (!session) {
+      return <Auth />;
+  }
+
+  const filteredLeads = leadFilter === 'All' ? leads : leads.filter(l => l.stage === leadFilter);
+
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900 font-sans selection:bg-indigo-100">
-      {/* Navigation Bar */}
-      <nav className="bg-white border-b border-gray-200 h-16 px-6 flex items-center justify-between sticky top-0 z-30">
-        <div className="flex items-center gap-3">
+    <div className="min-h-screen bg-gray-50/50 text-slate-900 font-sans selection:bg-indigo-100">
+      {/* Navigation Bar - Dark Command Center Style */}
+      <nav className="bg-slate-900 border-b border-slate-800 h-16 px-6 flex items-center justify-between sticky top-0 z-30 shadow-md">
+        <div className="flex items-center gap-4">
             {view === 'workspace' && (
                 <button 
                     onClick={() => { setView('list'); setSelectedStartup(null); }}
-                    className="p-2 hover:bg-gray-100 rounded-full mr-2 transition-colors"
+                    className="p-2 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition-colors border border-transparent hover:border-slate-700"
                 >
-                    <ChevronLeft className="w-5 h-5 text-gray-500" />
+                    <ChevronLeft className="w-5 h-5" />
                 </button>
             )}
-            <div className="flex items-center gap-2">
-                <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center">
-                    <Globe className="w-5 h-5 text-white" />
+            <div className="flex items-center gap-3">
+                <div className="w-9 h-9 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-500/20 border border-indigo-400/20">
+                    <Hexagon className="w-5 h-5 text-white fill-current" />
                 </div>
-                <span className="font-bold text-lg tracking-tight text-gray-900">GTM Command</span>
+                <div className="flex flex-col">
+                    <div className="flex items-center gap-2">
+                        <span className="font-bold text-lg tracking-tight text-white">Ignitera</span>
+                        <span className="text-slate-500 font-light hidden sm:inline">|</span>
+                        <span className="text-slate-300 text-sm font-medium tracking-wide hidden sm:inline">GTM Command Center</span>
+                    </div>
+                    <span className="text-[10px] text-slate-500 font-medium tracking-wider uppercase">by Symtri</span>
+                </div>
             </div>
             {selectedStartup && (
                 <>
-                    <span className="text-gray-300 text-xl font-light">/</span>
-                    <span className="font-medium text-gray-700">{selectedStartup.name}</span>
+                    <span className="text-slate-600 text-xl font-light">/</span>
+                    <div className="flex items-center gap-2 px-3 py-1 bg-slate-800 rounded-full border border-slate-700">
+                        <span className="font-medium text-slate-200 text-sm">{selectedStartup.name}</span>
+                    </div>
                 </>
             )}
         </div>
         <div className="flex items-center gap-4">
-            <div className="text-xs font-medium px-3 py-1 bg-green-100 text-green-700 rounded-full">
-                Local System Active
+            <div className="text-[10px] font-semibold px-3 py-1 bg-slate-800 text-emerald-400 border border-slate-700 rounded-full flex items-center gap-1.5 shadow-sm">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                </span>
+                System Active
             </div>
+            <button onClick={handleLogout} className="text-slate-400 hover:text-white transition-colors p-2" title="Sign Out">
+                <LogOut className="w-5 h-5" />
+            </button>
         </div>
       </nav>
 
       <main className="p-6 h-[calc(100vh-64px)] overflow-hidden">
         {view === 'list' ? (
-            <div className="max-w-5xl mx-auto">
-                <div className="flex justify-between items-center mb-8">
+            <div className="max-w-6xl mx-auto pt-8">
+                <div className="flex justify-between items-end mb-10">
                     <div>
-                        <h1 className="text-2xl font-bold text-gray-900">Your Portfolio</h1>
-                        <p className="text-gray-500">Manage your expansion startups and strategy (Local Storage).</p>
+                        <h1 className="text-3xl font-bold text-slate-900 mb-2">Startup Portfolio</h1>
+                        <p className="text-slate-500 text-lg">Manage your expansion strategies and execution pipelines.</p>
                     </div>
                     <button 
                         onClick={() => setIsCreatingStartup(true)}
-                        className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-all shadow-sm hover:shadow-md"
+                        className="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2 transition-all shadow-lg shadow-indigo-200 hover:shadow-indigo-300 hover:-translate-y-0.5"
                     >
-                        <Plus className="w-4 h-4" /> Add Startup
+                        <Plus className="w-5 h-5" /> Add Startup
                     </button>
                 </div>
 
                 {isCreatingStartup && (
-                    <div className="mb-8 bg-white p-6 rounded-xl shadow-sm border border-gray-200 animate-in fade-in slide-in-from-top-4">
-                        <h3 className="text-lg font-semibold mb-4">Add New Startup</h3>
-                        <form onSubmit={handleCreateStartup} className="space-y-4">
-                            <div className="grid grid-cols-2 gap-4">
-                                <input name="name" placeholder="Startup Name" required className="border p-2 rounded w-full text-sm" />
-                                <input name="website" placeholder="Website URL" className="border p-2 rounded w-full text-sm" />
+                    <div className="mb-10 bg-white p-8 rounded-2xl shadow-xl border border-gray-100 animate-in fade-in slide-in-from-top-4 max-w-2xl mx-auto ring-1 ring-gray-100">
+                        <h3 className="text-xl font-bold mb-6 text-slate-800">Initialize New Workspace</h3>
+                        <form onSubmit={handleCreateStartup} className="space-y-5">
+                            <div className="grid grid-cols-2 gap-5">
+                                <div className="space-y-1">
+                                    <label className="text-xs font-semibold text-slate-500 uppercase">Startup Name</label>
+                                    <input name="name" placeholder="e.g. Acme Corp" required className="border border-gray-300 p-3 rounded-lg w-full text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all" />
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-xs font-semibold text-slate-500 uppercase">Website</label>
+                                    <input name="website" placeholder="e.g. acme.com" className="border border-gray-300 p-3 rounded-lg w-full text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all" />
+                                </div>
                             </div>
-                            <div className="grid grid-cols-2 gap-4">
-                                <select name="direction" className="border p-2 rounded w-full text-sm">
-                                    <option value="OTHER">Select Expansion Direction</option>
-                                    <option value="FRANCE_TO_US">France → US</option>
-                                    <option value="US_TO_FRANCE">US → France</option>
+                            <div className="space-y-1">
+                                <label className="text-xs font-semibold text-slate-500 uppercase">Expansion Vector</label>
+                                <select name="direction" className="border border-gray-300 p-3 rounded-lg w-full text-sm focus:ring-2 focus:ring-indigo-500 outline-none bg-white">
+                                    <option value="OTHER">Select Direction...</option>
+                                    <option value="FRANCE_TO_US">🇫🇷 France → 🇺🇸 US Expansion</option>
+                                    <option value="US_TO_FRANCE">🇺🇸 US → 🇫🇷 France Expansion</option>
                                 </select>
                             </div>
-                            <textarea name="notes" placeholder="Brief description and notes..." className="border p-2 rounded w-full text-sm h-20" />
-                            <div className="flex justify-end gap-2">
-                                <button type="button" onClick={() => setIsCreatingStartup(false)} className="px-4 py-2 text-sm text-gray-600">Cancel</button>
-                                <button type="submit" className="px-4 py-2 bg-indigo-600 text-white rounded text-sm">Create Startup</button>
+                            <div className="space-y-1">
+                                <label className="text-xs font-semibold text-slate-500 uppercase">Context & Notes</label>
+                                <textarea name="notes" placeholder="Brief description of product and current status..." className="border border-gray-300 p-3 rounded-lg w-full text-sm h-24 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all resize-none" />
+                            </div>
+                            <div className="flex gap-3 pt-2">
+                                <button type="button" onClick={() => setIsCreatingStartup(false)} className="flex-1 bg-gray-100 hover:bg-gray-200 text-slate-600 py-3 rounded-lg text-sm font-medium transition-colors">Cancel</button>
+                                <button type="submit" className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white py-3 rounded-lg text-sm font-medium transition-colors shadow-md">Create Workspace</button>
                             </div>
                         </form>
                     </div>
@@ -126,351 +322,231 @@ const App = () => {
                         <div 
                             key={startup.id} 
                             onClick={() => { setSelectedStartup(startup); setView('workspace'); }}
-                            className="group bg-white p-6 rounded-xl border border-gray-200 shadow-sm hover:shadow-md hover:border-indigo-200 cursor-pointer transition-all relative overflow-hidden"
+                            className="group bg-white rounded-2xl p-6 border border-gray-200 shadow-sm hover:shadow-xl hover:border-indigo-100 hover:-translate-y-1 transition-all duration-300 cursor-pointer relative overflow-hidden"
                         >
                             <div className="absolute top-0 right-0 p-4 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <ArrowRight className="w-5 h-5 text-indigo-400" />
+                                <button onClick={(e) => handleDeleteStartup(e, startup.id)} className="text-slate-300 hover:text-red-500 transition-colors p-1">
+                                    <Trash2 className="w-4 h-4" />
+                                </button>
                             </div>
-                            <h3 className="text-lg font-bold text-gray-900 mb-1">{startup.name}</h3>
-                            <a href={startup.website || '#'} onClick={e => e.stopPropagation()} className="text-sm text-gray-500 hover:text-indigo-600 mb-4 block">{startup.website || 'No website'}</a>
+                            <div className="flex justify-between items-start mb-4">
+                                <div className="w-12 h-12 bg-slate-50 rounded-xl flex items-center justify-center text-xl font-bold text-slate-700 border border-slate-100 group-hover:bg-indigo-50 group-hover:text-indigo-600 transition-colors">
+                                    {startup.name.substring(0, 2).toUpperCase()}
+                                </div>
+                                <div className="text-[10px] font-bold px-2 py-1 bg-slate-100 text-slate-500 rounded uppercase tracking-wider">
+                                    {startup.direction === 'FRANCE_TO_US' ? 'FR → US' : startup.direction === 'US_TO_FRANCE' ? 'US → FR' : 'Global'}
+                                </div>
+                            </div>
+                            <h3 className="text-xl font-bold text-slate-900 mb-1">{startup.name}</h3>
+                            <div className="flex items-center gap-1 text-slate-400 text-xs mb-4">
+                                <Globe className="w-3 h-3" />
+                                <span className="truncate max-w-[200px]">{startup.website || 'No website'}</span>
+                            </div>
+                            <p className="text-sm text-slate-500 line-clamp-2 mb-4 h-10">{startup.notes || 'No description provided.'}</p>
                             
-                            <div className="flex flex-wrap gap-2 mb-4">
-                                <span className="text-xs px-2 py-1 bg-gray-100 rounded text-gray-600 font-medium">
-                                    {startup.direction === 'FRANCE_TO_US' ? '🇫🇷 → 🇺🇸' : startup.direction === 'US_TO_FRANCE' ? '🇺🇸 → 🇫🇷' : 'Expansion'}
-                                </span>
+                            <div className="flex items-center text-indigo-600 text-sm font-medium gap-1 group-hover:translate-x-1 transition-transform">
+                                Open Workspace <ArrowRight className="w-4 h-4" />
                             </div>
-                            <p className="text-sm text-gray-500 line-clamp-2">{startup.notes}</p>
                         </div>
                     ))}
+                    
+                    {startups.length === 0 && !isCreatingStartup && (
+                        <div className="col-span-3 text-center py-20 bg-white rounded-2xl border border-dashed border-gray-300">
+                            <Layout className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+                            <h3 className="text-lg font-medium text-gray-900">No startups configured</h3>
+                            <p className="text-gray-500 mb-4">Add your first startup to begin generating strategies.</p>
+                            <button onClick={() => setIsCreatingStartup(true)} className="text-indigo-600 font-medium hover:underline">Create Startup</button>
+                        </div>
+                    )}
                 </div>
             </div>
         ) : (
-            <Workspace startup={selectedStartup!} />
-        )}
-        
-        {/* Global Voice Assistant */}
-        <VoiceAssistant />
-      </main>
-    </div>
-  );
-};
+            <div className="h-full flex flex-col">
+                {/* Workspace Tabs */}
+                <div className="flex border-b border-gray-200 mb-4">
+                    <button 
+                        onClick={() => setActiveTab('market')}
+                        className={`px-6 py-3 text-sm font-medium flex items-center gap-2 border-b-2 transition-colors ${activeTab === 'market' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+                    >
+                        <Layout className="w-4 h-4" /> Market & ICP
+                    </button>
+                    <button 
+                        onClick={() => setActiveTab('leads')}
+                        className={`px-6 py-3 text-sm font-medium flex items-center gap-2 border-b-2 transition-colors ${activeTab === 'leads' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+                    >
+                        <Users className="w-4 h-4" /> Leads Database
+                    </button>
+                    <button 
+                        onClick={() => setActiveTab('pipeline')}
+                        className={`px-6 py-3 text-sm font-medium flex items-center gap-2 border-b-2 transition-colors ${activeTab === 'pipeline' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+                    >
+                        <PieChart className="w-4 h-4" /> Pipeline
+                    </button>
+                </div>
 
-// --- Workspace Component ---
+                {/* Workspace Content */}
+                <div className="flex-1 overflow-hidden relative">
+                    {activeTab === 'market' && selectedStartup && (
+                        <ICPGenerator startup={selectedStartup} />
+                    )}
 
-const Workspace = ({ startup }: { startup: Startup }) => {
-    const [activeTab, setActiveTab] = useState<'market' | 'leads' | 'pipeline'>('market');
-    const [leads, setLeads] = useState<Lead[]>([]);
-    const [loadingLeads, setLoadingLeads] = useState(false);
-    const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
-    const [isProspecting, setIsProspecting] = useState(false);
-    const [isBulkWriting, setIsBulkWriting] = useState(false);
-    const [showQuickCapture, setShowQuickCapture] = useState(false);
-    
-    // Filters
-    const [stageFilter, setStageFilter] = useState<string>('ALL');
-    // Active ICP Profile for actions
-    const [activeIcp, setActiveIcp] = useState<ICPProfile | null>(null);
-
-    useEffect(() => {
-        fetchLeads();
-        fetchActiveIcp();
-    }, [startup.id]);
-
-    const fetchActiveIcp = async () => {
-        const { data } = await supabase.from('icp_profiles').select('*').eq('startup_id', startup.id).order('created_at', { ascending: false }).limit(1);
-        if (data && data.length > 0) setActiveIcp(data[0] as ICPProfile);
-    }
-
-    const fetchLeads = async () => {
-        setLoadingLeads(true);
-        const { data } = await supabase
-            .from('leads')
-            .select('*')
-            .eq('startup_id', startup.id)
-            .order('updated_at', { ascending: false });
-        if (data) setLeads(data as Lead[]);
-        setLoadingLeads(false);
-    };
-
-    const handleCreateLead = async () => {
-        const name = prompt("Contact Name:");
-        if (!name) return;
-        
-        const { data, error } = await supabase.from('leads').insert([{
-            startup_id: startup.id,
-            contact_name: name,
-            stage: 'Prospect',
-            icp_fit: 'Low' // default
-        }]).select().single();
-
-        if (data) setLeads([data, ...leads]);
-    };
-
-    const handleSaveCapture = async (leadData: Partial<Lead>) => {
-        const { data } = await supabase.from('leads').insert([{
-            ...leadData,
-            startup_id: startup.id,
-            stage: 'Prospect',
-            icp_fit: 'Medium'
-        }]).select().single();
-        
-        if (data) {
-            setLeads([data, ...leads]);
-        }
-    };
-
-    const handleAutoProspect = async () => {
-        if (!activeIcp) {
-            alert("Please generate an ICP profile first in 'Market & ICP' tab.");
-            return;
-        }
-
-        setIsProspecting(true);
-        try {
-            const newProspects = await findProspects(activeIcp);
-            if (newProspects.length > 0) {
-                const leadsToInsert = newProspects.map(p => ({
-                    ...p,
-                    startup_id: startup.id,
-                    stage: 'Prospect',
-                    icp_fit: 'Medium',
-                    contact_name: 'To be identified',
-                    title: 'Target Decision Maker'
-                }));
-                
-                const { data } = await supabase.from('leads').insert(leadsToInsert).select();
-                if (data) {
-                    setLeads([...(data as Lead[]), ...leads]);
-                }
-            } else {
-                alert("No prospects found using Google Search. Try adjusting the ICP keywords or region.");
-            }
-        } catch (e: any) {
-            console.error("Prospecting failed", e);
-            alert(`Prospecting failed: ${e.message}. Please check API key/console.`);
-        } finally {
-            setIsProspecting(false);
-        }
-    };
-
-    const handleBulkDrafts = async () => {
-        if (!activeIcp) {
-            alert("No ICP Profile available to guide the writing.");
-            return;
-        }
-        
-        // Find visible leads that don't have a draft yet
-        const targetLeads = filteredLeads.filter(l => !l.active_draft && (l.stage === 'Prospect' || l.stage === 'Researched')).slice(0, 5); // Limit to 5 for demo safety
-        
-        if (targetLeads.length === 0) {
-            alert("No eligible leads found (Prospect/Researched stage, no draft).");
-            return;
-        }
-        
-        setIsBulkWriting(true);
-        try {
-            // Process sequentially to be safe with rate limits
-            for (const lead of targetLeads) {
-                const draft = await generateOutboundDraft(lead, startup, activeIcp, 'email');
-                const newDraft = { ...draft, type: 'email' as const, generated_at: new Date().toISOString() };
-                
-                // Update DB
-                await supabase.from('leads').update({ active_draft: newDraft }).eq('id', lead.id);
-                
-                // Update Local State
-                setLeads(prev => prev.map(l => l.id === lead.id ? { ...l, active_draft: newDraft } : l));
-            }
-        } catch (e) {
-            console.error(e);
-            alert("Error during bulk writing.");
-        } finally {
-            setIsBulkWriting(false);
-        }
-    };
-
-    const handleUpdateLead = (updated: Lead) => {
-        setLeads(leads.map(l => l.id === updated.id ? updated : l));
-        if (selectedLead?.id === updated.id) setSelectedLead(updated);
-    };
-
-    const filteredLeads = leads.filter(l => stageFilter === 'ALL' || l.stage === stageFilter);
-
-    return (
-        <div className="h-full flex flex-col">
-            {/* Workspace Tabs */}
-            <div className="flex gap-6 border-b border-gray-200 mb-6">
-                <button 
-                    onClick={() => setActiveTab('market')}
-                    className={`pb-3 text-sm font-medium flex items-center gap-2 transition-colors ${activeTab === 'market' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-gray-500 hover:text-gray-800'}`}
-                >
-                    <Layout className="w-4 h-4" /> Market & ICP
-                </button>
-                <button 
-                    onClick={() => setActiveTab('leads')}
-                    className={`pb-3 text-sm font-medium flex items-center gap-2 transition-colors ${activeTab === 'leads' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-gray-500 hover:text-gray-800'}`}
-                >
-                    <Users className="w-4 h-4" /> Leads Database
-                </button>
-                <button 
-                    onClick={() => setActiveTab('pipeline')}
-                    className={`pb-3 text-sm font-medium flex items-center gap-2 transition-colors ${activeTab === 'pipeline' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-gray-500 hover:text-gray-800'}`}
-                >
-                    <PieChart className="w-4 h-4" /> Pipeline
-                </button>
-            </div>
-
-            <div className="flex-1 overflow-hidden">
-                {activeTab === 'market' && <ICPGenerator startup={startup} />}
-                
-                {activeTab === 'leads' && (
-                    <div className="h-full flex flex-col">
-                        <div className="flex justify-between items-center mb-4">
-                            <div className="flex items-center gap-3">
-                                <div className="relative">
-                                    <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-                                    <input className="pl-9 pr-4 py-2 border rounded-lg text-sm w-64" placeholder="Search contacts..." />
+                    {activeTab === 'leads' && (
+                        <div className="h-full flex flex-col bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                            {/* Toolbar */}
+                            <div className="p-4 border-b border-gray-200 flex justify-between items-center bg-gray-50">
+                                <div className="flex items-center gap-3">
+                                    <div className="relative">
+                                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                                        <input 
+                                            placeholder="Search contacts..." 
+                                            className="pl-9 pr-4 py-2 border border-gray-300 rounded-lg text-sm w-64 focus:ring-1 focus:ring-indigo-500 outline-none" 
+                                        />
+                                    </div>
+                                    <div className="relative">
+                                        <Filter className="absolute left-3 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-400" />
+                                        <select 
+                                            value={leadFilter}
+                                            onChange={(e) => setLeadFilter(e.target.value as any)}
+                                            className="pl-8 pr-8 py-2 border border-gray-300 rounded-lg text-sm bg-white outline-none appearance-none cursor-pointer hover:border-gray-400"
+                                        >
+                                            <option value="All">All Stages</option>
+                                            {LEAD_STAGES.map(s => <option key={s} value={s}>{s}</option>)}
+                                        </select>
+                                    </div>
                                 </div>
-                                <div className="relative">
-                                    <Filter className="w-3 h-3 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-                                    <select 
-                                        className="pl-8 pr-8 py-2 border rounded-lg text-sm appearance-none bg-white"
-                                        value={stageFilter}
-                                        onChange={(e) => setStageFilter(e.target.value)}
+                                <div className="flex gap-2">
+                                    <button 
+                                        onClick={() => setShowQuickCapture(true)}
+                                        className="bg-white border border-gray-300 text-gray-700 px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 hover:bg-gray-50"
                                     >
-                                        <option value="ALL">All Stages</option>
-                                        {LEAD_STAGES.map(s => <option key={s} value={s}>{s}</option>)}
-                                    </select>
+                                        <Clipboard className="w-4 h-4" /> Quick Capture
+                                    </button>
+                                    <button 
+                                        onClick={handleBulkDrafts}
+                                        className="bg-white border border-indigo-200 text-indigo-700 px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 hover:bg-indigo-50"
+                                    >
+                                        <Sparkles className="w-4 h-4" /> Auto-Write Drafts
+                                    </button>
+                                    <button 
+                                        onClick={handleAutoProspect}
+                                        disabled={isAutoProspecting}
+                                        className="bg-white border border-orange-200 text-orange-700 px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 hover:bg-orange-50 disabled:opacity-50"
+                                    >
+                                        {isAutoProspecting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                                        Auto-Prospect
+                                    </button>
+                                    <button 
+                                        onClick={handleCreateLead}
+                                        className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 shadow-sm"
+                                    >
+                                        <Plus className="w-4 h-4" /> New Lead
+                                    </button>
                                 </div>
                             </div>
-                            <div className="flex items-center gap-2">
-                                <button 
-                                    onClick={handleBulkDrafts}
-                                    disabled={isBulkWriting}
-                                    className="bg-white border border-indigo-200 text-indigo-700 px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-50 flex items-center gap-2 transition-colors disabled:opacity-50"
-                                >
-                                    {isBulkWriting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4 text-purple-500" />}
-                                    {isBulkWriting ? 'Writing...' : 'Auto-Write Drafts'}
-                                </button>
-                                <button 
-                                    onClick={handleAutoProspect}
-                                    disabled={isProspecting}
-                                    className="bg-white border border-indigo-200 text-indigo-700 px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-50 flex items-center gap-2 transition-colors disabled:opacity-50"
-                                >
-                                    {isProspecting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4 text-yellow-500" />}
-                                    {isProspecting ? 'Searching Google...' : 'Auto-Prospect'}
-                                </button>
-                                <button 
-                                    onClick={() => setShowQuickCapture(true)}
-                                    className="bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-50 flex items-center gap-2"
-                                >
-                                    <Clipboard className="w-4 h-4" /> Quick Capture
-                                </button>
-                                <button onClick={handleCreateLead} className="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 flex items-center gap-2">
-                                    <Plus className="w-4 h-4" /> New Lead
-                                </button>
-                            </div>
-                        </div>
 
-                        <div className="bg-white border border-gray-200 rounded-lg flex-1 overflow-hidden flex flex-col">
-                            <div className="overflow-y-auto flex-1">
+                            {/* Table */}
+                            <div className="flex-1 overflow-auto">
                                 <table className="w-full text-left text-sm">
-                                    <thead className="bg-gray-50 text-gray-500 font-medium border-b border-gray-200 sticky top-0">
+                                    <thead className="bg-gray-50 text-gray-500 font-medium border-b border-gray-200 sticky top-0 z-10">
                                         <tr>
-                                            <th className="px-4 py-3">Name</th>
-                                            <th className="px-4 py-3">Title</th>
-                                            <th className="px-4 py-3">Company</th>
-                                            <th className="px-4 py-3">Email</th>
-                                            <th className="px-4 py-3">LinkedIn</th>
-                                            <th className="px-4 py-3">Fit</th>
-                                            <th className="px-4 py-3">Stage</th>
-                                            <th className="px-4 py-3">Last Touch</th>
+                                            <th className="px-6 py-3">Name</th>
+                                            <th className="px-6 py-3">Title</th>
+                                            <th className="px-6 py-3">Company</th>
+                                            <th className="px-6 py-3">Email</th>
+                                            <th className="px-6 py-3">LinkedIn</th>
+                                            <th className="px-6 py-3">Fit</th>
+                                            <th className="px-6 py-3">Stage</th>
+                                            <th className="px-6 py-3">Last Touch</th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-gray-100">
-                                        {filteredLeads.map(lead => (
-                                            <tr 
-                                                key={lead.id} 
-                                                onClick={() => setSelectedLead(lead)}
-                                                className="hover:bg-gray-50 cursor-pointer transition-colors"
-                                            >
-                                                <td className="px-4 py-3 font-medium text-gray-900 flex items-center gap-2">
-                                                    {lead.contact_name}
-                                                    {lead.active_draft && <span className="w-2 h-2 rounded-full bg-purple-500" title="Draft Ready"></span>}
-                                                </td>
-                                                <td className="px-4 py-3 text-gray-500 truncate max-w-[150px]">{lead.title}</td>
-                                                <td className="px-4 py-3 text-gray-500">{lead.company_name}</td>
-                                                <td className="px-4 py-3 text-gray-500 max-w-[180px] truncate">{lead.email || '-'}</td>
-                                                <td className="px-4 py-3 text-gray-500">
-                                                    {lead.linkedin_url ? (
-                                                        <a 
-                                                            href={lead.linkedin_url} 
-                                                            target="_blank" 
-                                                            rel="noreferrer"
-                                                            onClick={(e) => e.stopPropagation()}
-                                                            className="text-indigo-600 hover:underline"
-                                                        >
-                                                            View
-                                                        </a>
-                                                    ) : '-'}
-                                                </td>
-                                                <td className="px-4 py-3">
-                                                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                                                        lead.icp_fit === 'High' ? 'bg-green-100 text-green-800' :
-                                                        lead.icp_fit === 'Medium' ? 'bg-yellow-100 text-yellow-800' :
-                                                        'bg-gray-100 text-gray-600'
-                                                    }`}>
-                                                        {lead.icp_fit || '-'}
-                                                    </span>
-                                                </td>
-                                                <td className="px-4 py-3">
-                                                    <span className="bg-gray-100 text-gray-700 px-2 py-0.5 rounded text-xs border border-gray-200">
-                                                        {lead.stage}
-                                                    </span>
-                                                </td>
-                                                <td className="px-4 py-3 text-gray-400 text-xs">
-                                                    {lead.last_touch_at ? new Date(lead.last_touch_at).toLocaleDateString() : '-'}
+                                        {filteredLeads.length === 0 ? (
+                                            <tr>
+                                                <td colSpan={8} className="text-center py-20 text-gray-400">
+                                                    No leads found. Add one manually or use Auto-Prospect.
                                                 </td>
                                             </tr>
-                                        ))}
+                                        ) : (
+                                            filteredLeads.map(lead => (
+                                                <tr 
+                                                    key={lead.id} 
+                                                    onClick={() => setSelectedLead(lead)}
+                                                    className="hover:bg-indigo-50/50 cursor-pointer transition-colors group"
+                                                >
+                                                    <td className="px-6 py-3 font-medium text-gray-900">{lead.contact_name}</td>
+                                                    <td className="px-6 py-3 text-gray-600">{lead.title || '-'}</td>
+                                                    <td className="px-6 py-3 text-gray-600">{lead.company_name}</td>
+                                                    <td className="px-6 py-3 text-gray-500 font-mono text-xs">{lead.email || '-'}</td>
+                                                    <td className="px-6 py-3 text-blue-600 hover:underline text-xs">
+                                                        {lead.linkedin_url ? <a href={lead.linkedin_url} target="_blank" onClick={e=>e.stopPropagation()}>Link</a> : '-'}
+                                                    </td>
+                                                    <td className="px-6 py-3">
+                                                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                                                            lead.icp_fit === 'High' ? 'bg-green-100 text-green-700' :
+                                                            lead.icp_fit === 'Medium' ? 'bg-yellow-100 text-yellow-700' :
+                                                            'bg-gray-100 text-gray-600'
+                                                        }`}>
+                                                            {lead.icp_fit || 'Medium'}
+                                                        </span>
+                                                    </td>
+                                                    <td className="px-6 py-3">
+                                                        <span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded border border-gray-200 text-xs">
+                                                            {lead.stage}
+                                                        </span>
+                                                    </td>
+                                                    <td className="px-6 py-3 text-gray-400 text-xs">
+                                                        {lead.last_touch_at ? new Date(lead.last_touch_at).toLocaleDateString() : '-'}
+                                                    </td>
+                                                </tr>
+                                            ))
+                                        )}
                                     </tbody>
                                 </table>
-                                {filteredLeads.length === 0 && (
-                                    <div className="p-8 text-center text-gray-400">No leads found.</div>
-                                )}
                             </div>
                         </div>
-                    </div>
-                )}
+                    )}
 
-                {activeTab === 'pipeline' && (
-                    <PipelineView 
-                        leads={leads} 
-                        onLeadClick={setSelectedLead} 
-                        onLeadUpdate={fetchLeads} 
-                    />
-                )}
+                    {activeTab === 'pipeline' && (
+                        <div className="h-full overflow-hidden">
+                            <PipelineView 
+                                leads={leads} 
+                                onLeadClick={setSelectedLead}
+                                onLeadUpdate={fetchLeads}
+                            />
+                        </div>
+                    )}
+
+                    {/* Lead Detail Modal/Drawer */}
+                    {selectedLead && selectedStartup && (
+                        <LeadDetail 
+                            lead={selectedLead} 
+                            startup={selectedStartup}
+                            // In a real app we'd fetch the ICP correctly
+                            icp={undefined} 
+                            onClose={() => setSelectedLead(null)}
+                            onUpdate={(updated) => {
+                                setLeads(leads.map(l => l.id === updated.id ? updated : l));
+                                setSelectedLead(updated);
+                            }}
+                        />
+                    )}
+
+                    {/* Quick Capture Modal */}
+                    {showQuickCapture && (
+                        <QuickCapture 
+                            onClose={() => setShowQuickCapture(false)}
+                            onSave={handleSaveLead}
+                        />
+                    )}
+                </div>
             </div>
-
-            {/* Slide-over Detail Panel */}
-            {selectedLead && (
-                <LeadDetail 
-                    lead={selectedLead} 
-                    startup={startup}
-                    icp={activeIcp || undefined}
-                    onClose={() => setSelectedLead(null)}
-                    onUpdate={handleUpdateLead}
-                />
-            )}
-
-            {/* Quick Capture Modal */}
-            {showQuickCapture && (
-                <QuickCapture 
-                    onClose={() => setShowQuickCapture(false)} 
-                    onSave={handleSaveCapture} 
-                />
-            )}
-        </div>
-    );
+        )}
+      </main>
+      
+      {/* Voice Assistant Overlay */}
+      <VoiceAssistant />
+    </div>
+  );
 };
 
 const root = createRoot(document.getElementById('app')!);
