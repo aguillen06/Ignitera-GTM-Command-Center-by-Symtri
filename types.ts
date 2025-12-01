@@ -10,6 +10,7 @@ export type Json =
 
 export interface Startup {
   id: string;
+  user_id: string;
   name: string;
   website: string | null;
   direction: 'FRANCE_TO_US' | 'US_TO_FRANCE' | 'OTHER';
