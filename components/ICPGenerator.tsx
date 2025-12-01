@@ -4,14 +4,17 @@ import { Startup, ICPProfile } from '../types';
 import { supabase } from '../services/supabase';
 import { searchMarketAnalysis, generateDeepStrategy, generateBooleanSearch } from '../services/gemini';
 import { Loader2, Save, CheckCircle, AlertTriangle, Globe, BrainCircuit, XCircle, Search, Copy, Target, MessageSquare, Briefcase, Zap } from 'lucide-react';
+import { useToast } from './Toast';
 
 interface ICPGeneratorProps {
   startup: Startup;
 }
 
 const ICPGenerator: React.FC<ICPGeneratorProps> = ({ startup }) => {
+  const { showSuccess, showError } = useToast();
   const [profiles, setProfiles] = useState<ICPProfile[]>([]);
   const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
+  const [isLoadingProfiles, setIsLoadingProfiles] = useState(false);
   
   // Distinct Loading States
   const [isResearching, setIsResearching] = useState(false);
@@ -46,12 +49,23 @@ const ICPGenerator: React.FC<ICPGeneratorProps> = ({ startup }) => {
   }, [startup.id]);
 
   const fetchProfiles = async () => {
-    const { data } = await supabase.from('icp_profiles').select('*').eq('startup_id', startup.id).order('created_at', { ascending: false });
-    if (data) {
-        setProfiles(data as ICPProfile[]);
-        if (data.length > 0 && !generatedData) {
-            setActiveProfileId(data[0].id);
-        }
+    setIsLoadingProfiles(true);
+    try {
+      const { data, error } = await supabase.from('icp_profiles').select('*').eq('startup_id', startup.id).order('created_at', { ascending: false });
+      if (error) {
+        throw error;
+      }
+      if (data) {
+          setProfiles(data as ICPProfile[]);
+          if (data.length > 0 && !generatedData) {
+              setActiveProfileId(data[0].id);
+          }
+      }
+    } catch (error: any) {
+      console.error('[fetchProfiles] Error:', error);
+      showError('Failed to load profiles', error.message || 'Please try again.');
+    } finally {
+      setIsLoadingProfiles(false);
     }
   };
 
@@ -128,6 +142,7 @@ const ICPGenerator: React.FC<ICPGeneratorProps> = ({ startup }) => {
   const handleSave = async () => {
     if (!generatedData) return;
     setIsSaving(true);
+    setErrorMsg(null);
 
     const payload = {
         startup_id: startup.id,
@@ -150,20 +165,29 @@ const ICPGenerator: React.FC<ICPGeneratorProps> = ({ startup }) => {
         expansion_guidance: generatedData.expansion_guidance
     };
 
-    const { data, error } = await supabase.from('icp_profiles').insert([payload]).select().single();
+    try {
+      const { data, error } = await supabase.from('icp_profiles').insert([payload]).select().single();
 
-    if (!error && data) {
-        const newProfile = data as ICPProfile;
-        setProfiles([newProfile, ...profiles]);
-        setActiveProfileId(newProfile.id);
-        setGeneratedData(null); 
-        setFormData({ ...formData, profile_name: '' });
-        setGroundingSources([]);
-    } else {
-        console.error(error);
-        setErrorMsg('Failed to save profile to database.');
+      if (error) {
+        throw error;
+      }
+
+      if (data) {
+          const newProfile = data as ICPProfile;
+          setProfiles([newProfile, ...profiles]);
+          setActiveProfileId(newProfile.id);
+          setGeneratedData(null); 
+          setFormData({ ...formData, profile_name: '' });
+          setGroundingSources([]);
+          showSuccess('Profile Saved', 'Your ICP profile has been saved successfully.');
+      }
+    } catch (error: any) {
+      console.error('[handleSave] Error:', error);
+      setErrorMsg(error.message || 'Failed to save profile to database.');
+      showError('Save Failed', error.message || 'Unable to save the profile. Please try again.');
+    } finally {
+      setIsSaving(false);
     }
-    setIsSaving(false);
   };
 
   const handleGetQueries = async () => {
@@ -174,8 +198,12 @@ const ICPGenerator: React.FC<ICPGeneratorProps> = ({ startup }) => {
     try {
         const queries = await generateBooleanSearch(target);
         setSearchQueries(queries);
-    } catch (e) {
-        console.error(e);
+        if (queries.length > 0) {
+          showSuccess('Queries Generated', `${queries.length} search queries created.`);
+        }
+    } catch (e: any) {
+        console.error('[handleGetQueries] Error:', e);
+        showError('Query Generation Failed', e.message || 'Failed to generate search queries.');
     } finally {
         setIsGeneratingQueries(false);
     }

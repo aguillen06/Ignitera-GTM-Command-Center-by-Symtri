@@ -13,13 +13,18 @@ import PipelineView from './components/PipelineView';
 import VoiceAssistant from './components/VoiceAssistant';
 import QuickCapture from './components/QuickCapture';
 import { Auth } from './components/Auth';
+import ErrorBoundary from './components/ErrorBoundary';
+import { ToastProvider, useToast } from './components/Toast';
 
-const App = () => {
+const AppContent = () => {
+  const { showSuccess, showError, showWarning } = useToast();
   const [session, setSession] = useState<any>(null);
   const [view, setView] = useState<'list' | 'workspace'>('list');
   const [selectedStartup, setSelectedStartup] = useState<Startup | null>(null);
   const [startups, setStartups] = useState<Startup[]>([]);
   const [isCreatingStartup, setIsCreatingStartup] = useState(false);
+  const [isLoadingStartups, setIsLoadingStartups] = useState(false);
+  const [isLoadingLeads, setIsLoadingLeads] = useState(false);
   
   // Workspace State
   const [activeTab, setActiveTab] = useState<'market' | 'leads' | 'pipeline'>('market');
@@ -32,11 +37,17 @@ const App = () => {
   
   // Quick Capture State
   const [showQuickCapture, setShowQuickCapture] = useState(false);
+  
+  // Auth error state (for handling auth errors during initial load)
+  const [authError, setAuthError] = useState<string | null>(null);
 
   // App Initialization & Auth Check
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
+    }).catch((error) => {
+      console.error('[Auth] Session check failed:', error);
+      setAuthError(error.message || 'Failed to check login status. Please refresh the page.');
     });
 
     const {
@@ -47,6 +58,14 @@ const App = () => {
 
     return () => subscription.unsubscribe();
   }, []);
+  
+  // Show auth error as toast once toast provider is ready
+  useEffect(() => {
+    if (authError) {
+      showError('Authentication Error', authError);
+      setAuthError(null);
+    }
+  }, [authError, showError]);
 
   useEffect(() => {
     if (session) {
@@ -61,14 +80,36 @@ const App = () => {
   }, [selectedStartup]);
 
   const fetchStartups = async () => {
-    const { data } = await supabase.from('startups').select('*').order('created_at', { ascending: false });
-    if (data) setStartups(data as Startup[]);
+    setIsLoadingStartups(true);
+    try {
+      const { data, error } = await supabase.from('startups').select('*').order('created_at', { ascending: false });
+      if (error) {
+        throw error;
+      }
+      if (data) setStartups(data as Startup[]);
+    } catch (error: any) {
+      console.error('[fetchStartups] Error:', error);
+      showError('Failed to load startups', error.message || 'Please try refreshing the page.');
+    } finally {
+      setIsLoadingStartups(false);
+    }
   };
 
   const fetchLeads = async () => {
     if (!selectedStartup) return;
-    const { data } = await supabase.from('leads').select('*').eq('startup_id', selectedStartup.id).order('created_at', { ascending: false });
-    if (data) setLeads(data as Lead[]);
+    setIsLoadingLeads(true);
+    try {
+      const { data, error } = await supabase.from('leads').select('*').eq('startup_id', selectedStartup.id).order('created_at', { ascending: false });
+      if (error) {
+        throw error;
+      }
+      if (data) setLeads(data as Lead[]);
+    } catch (error: any) {
+      console.error('[fetchLeads] Error:', error);
+      showError('Failed to load leads', error.message || 'Please try again.');
+    } finally {
+      setIsLoadingLeads(false);
+    }
   };
 
   const handleCreateStartup = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -79,13 +120,23 @@ const App = () => {
     const direction = formData.get('direction') as any;
     const notes = formData.get('notes') as string;
 
-    const { data, error } = await supabase.from('startups').insert([{
-        name, website, direction, notes
-    }]).select().single();
+    try {
+      const { data, error } = await supabase.from('startups').insert([{
+          name, website, direction, notes
+      }]).select().single();
 
-    if (data) {
-        setStartups([data, ...startups]);
-        setIsCreatingStartup(false);
+      if (error) {
+        throw error;
+      }
+
+      if (data) {
+          setStartups([data, ...startups]);
+          setIsCreatingStartup(false);
+          showSuccess('Startup created', `${name} has been added to your portfolio.`);
+      }
+    } catch (error: any) {
+      console.error('[handleCreateStartup] Error:', error);
+      showError('Failed to create startup', error.message || 'Please try again.');
     }
   };
 
@@ -93,13 +144,21 @@ const App = () => {
     e.stopPropagation();
     if (!confirm("Are you sure you want to delete this startup? This will delete all associated leads and strategies.")) return;
 
-    const { error } = await supabase.from('startups').delete().eq('id', id);
-    if (!error) {
-        setStartups(startups.filter(s => s.id !== id));
-        if (selectedStartup?.id === id) {
-            setSelectedStartup(null);
-            setView('list');
-        }
+    try {
+      const { error } = await supabase.from('startups').delete().eq('id', id);
+      if (error) {
+        throw error;
+      }
+      
+      setStartups(startups.filter(s => s.id !== id));
+      if (selectedStartup?.id === id) {
+          setSelectedStartup(null);
+          setView('list');
+      }
+      showSuccess('Startup deleted', 'The startup and all associated data have been removed.');
+    } catch (error: any) {
+      console.error('[handleDeleteStartup] Error:', error);
+      showError('Failed to delete startup', error.message || 'Please try again.');
     }
   };
 
@@ -113,10 +172,19 @@ const App = () => {
         stage: 'Prospect' as LeadStage
     };
     
-    const { data } = await supabase.from('leads').insert([newLead]).select().single();
-    if (data) {
-        setLeads([data, ...leads]);
-        setSelectedLead(data);
+    try {
+      const { data, error } = await supabase.from('leads').insert([newLead]).select().single();
+      if (error) {
+        throw error;
+      }
+      if (data) {
+          setLeads([data, ...leads]);
+          setSelectedLead(data);
+          showSuccess('Lead created', 'A new lead has been added to your database.');
+      }
+    } catch (error: any) {
+      console.error('[handleCreateLead] Error:', error);
+      showError('Failed to create lead', error.message || 'Please try again.');
     }
   };
 
@@ -125,8 +193,16 @@ const App = () => {
     // If coming from Quick Capture, we need to insert
     const payload = { ...leadData, startup_id: selectedStartup.id, stage: 'Prospect' };
     
-    supabase.from('leads').insert([payload]).select().single().then(({ data }) => {
-        if (data) setLeads([data, ...leads]);
+    supabase.from('leads').insert([payload]).select().single().then(({ data, error }) => {
+        if (error) {
+          console.error('[handleSaveLead] Error:', error);
+          showError('Failed to save lead', error.message || 'Please try again.');
+          return;
+        }
+        if (data) {
+          setLeads([data, ...leads]);
+          showSuccess('Lead saved', 'The lead has been added to your database.');
+        }
     });
   };
 
@@ -136,9 +212,12 @@ const App = () => {
     
     try {
         // 1. Get Active ICP
-        const { data: icps } = await supabase.from('icp_profiles').select('*').eq('startup_id', selectedStartup.id).limit(1);
+        const { data: icps, error: icpError } = await supabase.from('icp_profiles').select('*').eq('startup_id', selectedStartup.id).limit(1);
+        if (icpError) {
+          throw new Error('Failed to load ICP profile: ' + icpError.message);
+        }
         if (!icps || icps.length === 0) {
-            alert("No ICP Profile found. Please go to 'Market & ICP' and generate a strategy first.");
+            showWarning('No ICP Profile', "Please go to 'Market & ICP' and generate a strategy first.");
             setIsAutoProspecting(false);
             return;
         }
@@ -163,16 +242,20 @@ const App = () => {
                 icp_fit: 'Medium',
                 source: 'AI Auto-Prospect'
              };
-             const { data } = await supabase.from('leads').insert([payload]).select().single();
+             const { data, error } = await supabase.from('leads').insert([payload]).select().single();
+             if (error) {
+               console.error('[handleAutoProspect] Lead insert error:', error);
+               continue; // Skip failed inserts but continue with others
+             }
              if (data) newLeads.push(data);
         }
 
         setLeads([...newLeads, ...leads]);
-        alert(`Successfully added ${newLeads.length} new companies to the pipeline.`);
+        showSuccess('Auto-Prospect Complete', `Successfully added ${newLeads.length} new companies to the pipeline.`);
 
-    } catch (e) {
-        console.error(e);
-        alert("Failed to auto-prospect. Check API limits.");
+    } catch (e: any) {
+        console.error('[handleAutoProspect] Error:', e);
+        showError('Auto-Prospect Failed', e.message || 'Check API limits and try again.');
     } finally {
         setIsAutoProspecting(false);
     }
@@ -185,31 +268,64 @@ const App = () => {
 
       const prospects = leads.filter(l => l.stage === 'Prospect');
       if (prospects.length === 0) {
-          alert("No leads in 'Prospect' stage.");
+          showWarning('No Prospects', "No leads in 'Prospect' stage.");
           return;
       }
 
       // Get ICP
-      const { data: icps } = await supabase.from('icp_profiles').select('*').eq('startup_id', selectedStartup.id).limit(1);
-      const activeICP = icps?.[0] as ICPProfile;
+      try {
+        const { data: icps, error: icpError } = await supabase.from('icp_profiles').select('*').eq('startup_id', selectedStartup.id).limit(1);
+        if (icpError) {
+          throw new Error('Failed to load ICP profile: ' + icpError.message);
+        }
+        
+        const activeICP = icps?.[0] as ICPProfile;
+        if (!activeICP) {
+          showWarning('No ICP Profile', "Please go to 'Market & ICP' and generate a strategy first.");
+          return;
+        }
 
-      let count = 0;
-      for (const lead of prospects) {
-          try {
-              const draft = await generateOutboundDraft(lead, selectedStartup, activeICP, 'email');
-              const active_draft = { ...draft, type: 'email', generated_at: new Date().toISOString() };
-              
-              await supabase.from('leads').update({ active_draft }).eq('id', lead.id);
-              
-              setLeads(current => current.map(l => l.id === lead.id ? { ...l, active_draft } : l));
-              count++;
-          } catch(e) { console.error(e); }
+        let count = 0;
+        let errorCount = 0;
+        for (const lead of prospects) {
+            try {
+                const draft = await generateOutboundDraft(lead, selectedStartup, activeICP, 'email');
+                const active_draft = { ...draft, type: 'email', generated_at: new Date().toISOString() };
+                
+                const { error } = await supabase.from('leads').update({ active_draft }).eq('id', lead.id);
+                if (error) {
+                  console.error('[handleBulkDrafts] Update error:', error);
+                  errorCount++;
+                  continue;
+                }
+                
+                setLeads(current => current.map(l => l.id === lead.id ? { ...l, active_draft } : l));
+                count++;
+            } catch(e) { 
+              console.error('[handleBulkDrafts] Draft generation error:', e); 
+              errorCount++;
+            }
+        }
+        
+        if (errorCount > 0) {
+          showWarning('Drafts Generated with Errors', `Generated ${count} drafts. ${errorCount} failed.`);
+        } else {
+          showSuccess('Drafts Generated', `Successfully generated drafts for ${count} leads.`);
+        }
+      } catch (error: any) {
+        console.error('[handleBulkDrafts] Error:', error);
+        showError('Failed to Generate Drafts', error.message || 'Please try again.');
       }
-      alert(`Generated drafts for ${count} leads.`);
   };
 
   const handleLogout = async () => {
-      await supabase.auth.signOut();
+      try {
+        await supabase.auth.signOut();
+        showSuccess('Signed Out', 'You have been successfully signed out.');
+      } catch (error: any) {
+        console.error('[handleLogout] Error:', error);
+        showError('Sign Out Failed', error.message || 'Please try again.');
+      }
   };
 
   if (!session) {
@@ -318,45 +434,54 @@ const App = () => {
                 )}
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {startups.map(startup => (
-                        <div 
-                            key={startup.id} 
-                            onClick={() => { setSelectedStartup(startup); setView('workspace'); }}
-                            className="group bg-white rounded-2xl p-6 border border-gray-200 shadow-sm hover:shadow-xl hover:border-indigo-100 hover:-translate-y-1 transition-all duration-300 cursor-pointer relative overflow-hidden"
-                        >
-                            <div className="absolute top-0 right-0 p-4 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <button onClick={(e) => handleDeleteStartup(e, startup.id)} className="text-slate-300 hover:text-red-500 transition-colors p-1">
-                                    <Trash2 className="w-4 h-4" />
-                                </button>
-                            </div>
-                            <div className="flex justify-between items-start mb-4">
-                                <div className="w-12 h-12 bg-slate-50 rounded-xl flex items-center justify-center text-xl font-bold text-slate-700 border border-slate-100 group-hover:bg-indigo-50 group-hover:text-indigo-600 transition-colors">
-                                    {startup.name.substring(0, 2).toUpperCase()}
-                                </div>
-                                <div className="text-[10px] font-bold px-2 py-1 bg-slate-100 text-slate-500 rounded uppercase tracking-wider">
-                                    {startup.direction === 'FRANCE_TO_US' ? 'FR → US' : startup.direction === 'US_TO_FRANCE' ? 'US → FR' : 'Global'}
-                                </div>
-                            </div>
-                            <h3 className="text-xl font-bold text-slate-900 mb-1">{startup.name}</h3>
-                            <div className="flex items-center gap-1 text-slate-400 text-xs mb-4">
-                                <Globe className="w-3 h-3" />
-                                <span className="truncate max-w-[200px]">{startup.website || 'No website'}</span>
-                            </div>
-                            <p className="text-sm text-slate-500 line-clamp-2 mb-4 h-10">{startup.notes || 'No description provided.'}</p>
-                            
-                            <div className="flex items-center text-indigo-600 text-sm font-medium gap-1 group-hover:translate-x-1 transition-transform">
-                                Open Workspace <ArrowRight className="w-4 h-4" />
-                            </div>
+                    {isLoadingStartups ? (
+                        <div className="col-span-3 text-center py-20">
+                            <Loader2 className="w-8 h-8 text-indigo-600 mx-auto mb-3 animate-spin" />
+                            <p className="text-gray-500">Loading startups...</p>
                         </div>
-                    ))}
-                    
-                    {startups.length === 0 && !isCreatingStartup && (
-                        <div className="col-span-3 text-center py-20 bg-white rounded-2xl border border-dashed border-gray-300">
-                            <Layout className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-                            <h3 className="text-lg font-medium text-gray-900">No startups configured</h3>
-                            <p className="text-gray-500 mb-4">Add your first startup to begin generating strategies.</p>
-                            <button onClick={() => setIsCreatingStartup(true)} className="text-indigo-600 font-medium hover:underline">Create Startup</button>
-                        </div>
+                    ) : (
+                      <>
+                        {startups.map(startup => (
+                            <div 
+                                key={startup.id} 
+                                onClick={() => { setSelectedStartup(startup); setView('workspace'); }}
+                                className="group bg-white rounded-2xl p-6 border border-gray-200 shadow-sm hover:shadow-xl hover:border-indigo-100 hover:-translate-y-1 transition-all duration-300 cursor-pointer relative overflow-hidden"
+                            >
+                                <div className="absolute top-0 right-0 p-4 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <button onClick={(e) => handleDeleteStartup(e, startup.id)} className="text-slate-300 hover:text-red-500 transition-colors p-1">
+                                        <Trash2 className="w-4 h-4" />
+                                    </button>
+                                </div>
+                                <div className="flex justify-between items-start mb-4">
+                                    <div className="w-12 h-12 bg-slate-50 rounded-xl flex items-center justify-center text-xl font-bold text-slate-700 border border-slate-100 group-hover:bg-indigo-50 group-hover:text-indigo-600 transition-colors">
+                                        {startup.name.substring(0, 2).toUpperCase()}
+                                    </div>
+                                    <div className="text-[10px] font-bold px-2 py-1 bg-slate-100 text-slate-500 rounded uppercase tracking-wider">
+                                        {startup.direction === 'FRANCE_TO_US' ? 'FR → US' : startup.direction === 'US_TO_FRANCE' ? 'US → FR' : 'Global'}
+                                    </div>
+                                </div>
+                                <h3 className="text-xl font-bold text-slate-900 mb-1">{startup.name}</h3>
+                                <div className="flex items-center gap-1 text-slate-400 text-xs mb-4">
+                                    <Globe className="w-3 h-3" />
+                                    <span className="truncate max-w-[200px]">{startup.website || 'No website'}</span>
+                                </div>
+                                <p className="text-sm text-slate-500 line-clamp-2 mb-4 h-10">{startup.notes || 'No description provided.'}</p>
+                                
+                                <div className="flex items-center text-indigo-600 text-sm font-medium gap-1 group-hover:translate-x-1 transition-transform">
+                                    Open Workspace <ArrowRight className="w-4 h-4" />
+                                </div>
+                            </div>
+                        ))}
+                        
+                        {startups.length === 0 && !isCreatingStartup && (
+                            <div className="col-span-3 text-center py-20 bg-white rounded-2xl border border-dashed border-gray-300">
+                                <Layout className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+                                <h3 className="text-lg font-medium text-gray-900">No startups configured</h3>
+                                <p className="text-gray-500 mb-4">Add your first startup to begin generating strategies.</p>
+                                <button onClick={() => setIsCreatingStartup(true)} className="text-indigo-600 font-medium hover:underline">Create Startup</button>
+                            </div>
+                        )}
+                      </>
                     )}
                 </div>
             </div>
@@ -460,7 +585,14 @@ const App = () => {
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-gray-100">
-                                        {filteredLeads.length === 0 ? (
+                                        {isLoadingLeads ? (
+                                            <tr>
+                                                <td colSpan={8} className="text-center py-20">
+                                                    <Loader2 className="w-6 h-6 text-indigo-600 mx-auto mb-2 animate-spin" />
+                                                    <span className="text-gray-400">Loading leads...</span>
+                                                </td>
+                                            </tr>
+                                        ) : filteredLeads.length === 0 ? (
                                             <tr>
                                                 <td colSpan={8} className="text-center py-20 text-gray-400">
                                                     No leads found. Add one manually or use Auto-Prospect.
@@ -546,6 +678,17 @@ const App = () => {
       {/* Voice Assistant Overlay */}
       <VoiceAssistant />
     </div>
+  );
+};
+
+// Wrapper component with providers
+const App = () => {
+  return (
+    <ErrorBoundary>
+      <ToastProvider>
+        <AppContent />
+      </ToastProvider>
+    </ErrorBoundary>
   );
 };
 

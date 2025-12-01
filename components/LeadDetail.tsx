@@ -5,6 +5,7 @@ import { X, Wand2, User, Building, MapPin, Briefcase, Check, ExternalLink, Send,
 import ActivityLog from './ActivityLog';
 import { supabase } from '../services/supabase';
 import { enrichLead, verifyLocation, generateOutboundDraft, enrichLeadWithLiveSearch } from '../services/gemini';
+import { useToast } from './Toast';
 
 interface LeadDetailProps {
   lead: Lead;
@@ -15,6 +16,7 @@ interface LeadDetailProps {
 }
 
 const LeadDetail: React.FC<LeadDetailProps> = ({ lead, startup, icp, onClose, onUpdate }) => {
+  const { showSuccess, showError, showWarning } = useToast();
   const [activities, setActivities] = useState<Activity[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isLiveEnriching, setIsLiveEnriching] = useState(false);
@@ -32,29 +34,51 @@ const LeadDetail: React.FC<LeadDetailProps> = ({ lead, startup, icp, onClose, on
   }, [lead.id]);
 
   const fetchActivities = async () => {
-    const { data, error } = await supabase
-      .from('activities')
-      .select('*')
-      .eq('lead_id', lead.id)
-      .order('done_at', { ascending: false });
-    
-    if (!error && data) setActivities(data as Activity[]);
+    try {
+      const { data, error } = await supabase
+        .from('activities')
+        .select('*')
+        .eq('lead_id', lead.id)
+        .order('done_at', { ascending: false });
+      
+      if (error) {
+        throw error;
+      }
+      if (data) setActivities(data as Activity[]);
+    } catch (error: any) {
+      console.error('[fetchActivities] Error:', error);
+      showError('Failed to load activities', error.message || 'Please try again.');
+    }
   };
 
   const handleAddActivity = async (newAct: any) => {
-    const { data, error } = await supabase.from('activities').insert([{
-        ...newAct,
-        lead_id: lead.id
-    }]).select().single();
+    try {
+      const { data, error } = await supabase.from('activities').insert([{
+          ...newAct,
+          lead_id: lead.id
+      }]).select().single();
 
-    if (!error && data) {
-        setActivities([data, ...activities]);
-        // Update last touch on lead
-        const { data: updatedLead } = await supabase.from('leads').update({
-            last_touch_at: data.done_at,
-            last_touch_type: data.activity_type
-        }).eq('id', lead.id).select().single();
-        if (updatedLead) onUpdate(updatedLead);
+      if (error) {
+        throw error;
+      }
+
+      if (data) {
+          setActivities([data, ...activities]);
+          // Update last touch on lead
+          const { data: updatedLead, error: updateError } = await supabase.from('leads').update({
+              last_touch_at: data.done_at,
+              last_touch_type: data.activity_type
+          }).eq('id', lead.id).select().single();
+          
+          if (updateError) {
+            console.error('[handleAddActivity] Lead update error:', updateError);
+          }
+          if (updatedLead) onUpdate(updatedLead);
+          showSuccess('Activity Added', 'Activity has been logged successfully.');
+      }
+    } catch (error: any) {
+      console.error('[handleAddActivity] Error:', error);
+      showError('Failed to add activity', error.message || 'Please try again.');
     }
   };
 
@@ -69,9 +93,16 @@ const LeadDetail: React.FC<LeadDetailProps> = ({ lead, startup, icp, onClose, on
             .select()
             .single();
         
-        if (!error && data) onUpdate(data as Lead);
-    } catch (e) {
-        alert('Failed to generate AI insights');
+        if (error) {
+          throw error;
+        }
+        if (data) {
+          onUpdate(data as Lead);
+          showSuccess('Enrichment Complete', 'AI insights have been generated.');
+        }
+    } catch (e: any) {
+        console.error('[handleEnrich] Error:', e);
+        showError('Enrichment Failed', e.message || 'Failed to generate AI insights.');
     } finally {
         setIsGenerating(false);
     }
@@ -88,10 +119,16 @@ const LeadDetail: React.FC<LeadDetailProps> = ({ lead, startup, icp, onClose, on
             .select()
             .single();
         
-        if (!error && data) onUpdate(data as Lead);
-    } catch (e) {
-        console.error(e);
-        alert('Failed to perform live enrichment.');
+        if (error) {
+          throw error;
+        }
+        if (data) {
+          onUpdate(data as Lead);
+          showSuccess('Live Enrichment Complete', 'Latest company data has been fetched.');
+        }
+    } catch (e: any) {
+        console.error('[handleLiveEnrich] Error:', e);
+        showError('Live Enrichment Failed', e.message || 'Failed to perform live enrichment.');
     } finally {
         setIsLiveEnriching(false);
     }
@@ -103,8 +140,9 @@ const LeadDetail: React.FC<LeadDetailProps> = ({ lead, startup, icp, onClose, on
     try {
         const result = await verifyLocation(lead.company_name, lead.hq_country || 'US');
         setLocationData(result);
-    } catch (e) {
-        console.error(e);
+    } catch (e: any) {
+        console.error('[handleVerifyLocation] Error:', e);
+        showError('Location Verification Failed', e.message || 'Could not verify the location.');
     } finally {
         setIsVerifyingLocation(false);
     }
@@ -112,7 +150,7 @@ const LeadDetail: React.FC<LeadDetailProps> = ({ lead, startup, icp, onClose, on
 
   const handleGenerateDraft = async (type: 'email' | 'linkedin') => {
     if (!icp) {
-        alert("No ICP Profile active. Please go to Market & ICP tab and generate/select one first.");
+        showWarning('No ICP Profile', "Please go to 'Market & ICP' tab and generate/select one first.");
         return;
     }
     setIsWritingDraft(true);
@@ -123,14 +161,18 @@ const LeadDetail: React.FC<LeadDetailProps> = ({ lead, startup, icp, onClose, on
         setDraft(newDraft);
         
         // Save to DB
-        await supabase.from('leads').update({ active_draft: newDraft }).eq('id', lead.id);
+        const { error } = await supabase.from('leads').update({ active_draft: newDraft }).eq('id', lead.id);
+        if (error) {
+          console.error('[handleGenerateDraft] Save error:', error);
+        }
         
         // Update local lead state
         onUpdate({ ...lead, active_draft: newDraft });
+        showSuccess('Draft Generated', `${type === 'email' ? 'Email' : 'LinkedIn DM'} draft is ready.`);
         
-    } catch (e) {
-        console.error(e);
-        alert("Failed to generate draft. Check console.");
+    } catch (e: any) {
+        console.error('[handleGenerateDraft] Error:', e);
+        showError('Draft Generation Failed', e.message || 'Failed to generate draft.');
     } finally {
         setIsWritingDraft(false);
     }
@@ -139,44 +181,57 @@ const LeadDetail: React.FC<LeadDetailProps> = ({ lead, startup, icp, onClose, on
   const handleSendDraft = async () => {
     if (!draft) return;
     
-    // 1. Open Email Client (if Email) or Copy to Clipboard (LinkedIn)
-    if (draft.type === 'email' && lead.email) {
-        const subject = encodeURIComponent(draft.subject || '');
-        const body = encodeURIComponent(draft.body || '');
-        window.location.href = `mailto:${lead.email}?subject=${subject}&body=${body}`;
-    } else {
-        // LinkedIn / Fallback: Copy to clipboard
-        navigator.clipboard.writeText(`${draft.subject ? draft.subject + '\n\n' : ''}${draft.body}`);
-        alert("Draft copied to clipboard! (Redirecting to LinkedIn/Mail is manual for now)");
-        if (draft.type === 'linkedin' && lead.linkedin_url) {
-            window.open(lead.linkedin_url, '_blank');
-        }
-    }
+    try {
+      // 1. Open Email Client (if Email) or Copy to Clipboard (LinkedIn)
+      if (draft.type === 'email' && lead.email) {
+          const subject = encodeURIComponent(draft.subject || '');
+          const body = encodeURIComponent(draft.body || '');
+          window.location.href = `mailto:${lead.email}?subject=${subject}&body=${body}`;
+      } else {
+          // LinkedIn / Fallback: Copy to clipboard
+          navigator.clipboard.writeText(`${draft.subject ? draft.subject + '\n\n' : ''}${draft.body}`);
+          showSuccess('Copied to Clipboard', draft.type === 'linkedin' ? 'Opening LinkedIn...' : 'Draft copied. Paste into your email client.');
+          if (draft.type === 'linkedin' && lead.linkedin_url) {
+              window.open(lead.linkedin_url, '_blank');
+          }
+      }
 
-    // 2. Log Activity
-    const activityPayload = {
-        activity_type: draft.type,
-        direction: 'outbound',
-        subject: draft.subject || `${draft.type} Outreach`,
-        body: draft.body,
-        done_at: new Date().toISOString()
-    };
-    
-    const { data: act } = await supabase.from('activities').insert([{ ...activityPayload, lead_id: lead.id }]).select().single();
-    if (act) setActivities([act, ...activities]);
+      // 2. Log Activity
+      const activityPayload = {
+          activity_type: draft.type,
+          direction: 'outbound',
+          subject: draft.subject || `${draft.type} Outreach`,
+          body: draft.body,
+          done_at: new Date().toISOString()
+      };
+      
+      const { data: act, error: actError } = await supabase.from('activities').insert([{ ...activityPayload, lead_id: lead.id }]).select().single();
+      if (actError) {
+        console.error('[handleSendDraft] Activity insert error:', actError);
+      }
+      if (act) setActivities([act, ...activities]);
 
-    // 3. Clear Draft & Update Lead Stage (Simple Logic: Move to Contacted)
-    const { data: updatedLead } = await supabase.from('leads').update({
-        active_draft: null,
-        stage: lead.stage === 'Prospect' || lead.stage === 'Researched' ? 'Contacted' : lead.stage,
-        last_touch_at: new Date().toISOString(),
-        last_touch_type: draft.type
-    }).eq('id', lead.id).select().single();
+      // 3. Clear Draft & Update Lead Stage (Simple Logic: Move to Contacted)
+      const { data: updatedLead, error: updateError } = await supabase.from('leads').update({
+          active_draft: null,
+          stage: lead.stage === 'Prospect' || lead.stage === 'Researched' ? 'Contacted' : lead.stage,
+          last_touch_at: new Date().toISOString(),
+          last_touch_type: draft.type
+      }).eq('id', lead.id).select().single();
 
-    if (updatedLead) {
-        setDraft(null);
-        onUpdate(updatedLead);
-        setActiveTab('activities');
+      if (updateError) {
+        throw updateError;
+      }
+
+      if (updatedLead) {
+          setDraft(null);
+          onUpdate(updatedLead);
+          setActiveTab('activities');
+          showSuccess('Outreach Logged', 'Activity recorded and stage updated.');
+      }
+    } catch (error: any) {
+      console.error('[handleSendDraft] Error:', error);
+      showError('Failed to log outreach', error.message || 'Please try again.');
     }
   };
 

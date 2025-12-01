@@ -4,11 +4,14 @@ import { Mic, MicOff, X, Volume2, Sparkles } from 'lucide-react';
 import { getLiveClient } from '../services/gemini';
 import { LiveServerMessage, Modality } from '@google/genai';
 import { VOICE_TOOLS, executeVoiceTool } from '../services/voice_tools';
+import { useToast } from './Toast';
 
 const VoiceAssistant = () => {
+  const { showError, showWarning, showInfo } = useToast();
   const [isOpen, setIsOpen] = useState(false);
   const [isActive, setIsActive] = useState(false);
-  const [status, setStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
+  const [status, setStatus] = useState<'disconnected' | 'connecting' | 'connected' | 'error'>('disconnected');
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [transcript, setTranscript] = useState<string[]>([]);
   const [toolActivity, setToolActivity] = useState<string | null>(null);
   
@@ -76,6 +79,7 @@ const VoiceAssistant = () => {
 
   const startSession = async () => {
     setStatus('connecting');
+    setErrorMessage(null);
     try {
       const ai = getLiveClient();
       
@@ -86,12 +90,15 @@ const VoiceAssistant = () => {
         streamRef.current = stream;
       } catch (micErr: any) {
         console.error("Microphone access denied:", micErr);
+        let errorMsg = 'Unknown microphone error';
         if (micErr.name === 'NotAllowedError' || micErr.name === 'PermissionDeniedError') {
-             alert("Microphone access was blocked. Please click the camera/lock icon in your browser address bar to allow microphone access, then try again.");
+             errorMsg = "Microphone access was blocked. Please allow microphone access in your browser settings.";
         } else {
-             alert(`Microphone error: ${micErr.message || 'Unknown error'}`);
+             errorMsg = micErr.message || 'Microphone error';
         }
-        setStatus('disconnected');
+        setStatus('error');
+        setErrorMessage(errorMsg);
+        showWarning('Microphone Access Required', errorMsg);
         return;
       }
 
@@ -108,6 +115,7 @@ const VoiceAssistant = () => {
           onopen: () => {
             setStatus('connected');
             setIsActive(true);
+            setErrorMessage(null);
             setTranscript(prev => [...prev, "System: Connected to Gemini Live."]);
 
             // Start Processing Input Audio
@@ -192,11 +200,11 @@ const VoiceAssistant = () => {
             setStatus('disconnected');
             setIsActive(false);
           },
-          onerror: (err) => {
+          onerror: (err: any) => {
             console.error("Live API Error", err);
-            // Don't alert for every error, it can be spammy. Just log.
-            setStatus('disconnected');
+            setStatus('error');
             setIsActive(false);
+            setErrorMessage(err.message || 'Connection error occurred');
           }
         },
         config: {
@@ -211,10 +219,11 @@ const VoiceAssistant = () => {
 
       sessionRef.current = sessionPromise;
 
-    } catch (err) {
+    } catch (err: any) {
       console.error("Failed to start session:", err);
-      alert("Failed to connect to Voice Assistant. Please check your network and API key.");
-      setStatus('disconnected');
+      setStatus('error');
+      setErrorMessage(err.message || 'Failed to connect to Voice Assistant');
+      showError('Voice Assistant Error', 'Failed to connect. Please check your network and API key.');
     }
   };
 
@@ -235,6 +244,7 @@ const VoiceAssistant = () => {
     setStatus('disconnected');
     setIsActive(false);
     setToolActivity(null);
+    setErrorMessage(null);
   };
 
   return (
@@ -277,23 +287,28 @@ const VoiceAssistant = () => {
                                     <span className="flex items-center justify-center gap-2 text-indigo-600 animate-pulse">
                                         <Sparkles className="w-4 h-4" /> {toolActivity}
                                     </span>
+                                ) : status === 'error' ? (
+                                    <span className="text-red-600">Connection Error</span>
                                 ) : (
                                     status === 'connected' ? 'Listening...' : status === 'connecting' ? 'Connecting...' : 'Ready to chat'
                                 )}
                             </p>
                             <p className="text-sm text-gray-500">
-                                {status === 'connected' 
-                                    ? 'Ask: "How many leads do I have?" or "Any recent leads?"' 
-                                    : 'Connect to start a real-time voice session with Gemini.'}
+                                {status === 'error' && errorMessage
+                                    ? errorMessage
+                                    : status === 'connected' 
+                                        ? 'Ask: "How many leads do I have?" or "Any recent leads?"' 
+                                        : 'Connect to start a real-time voice session with Gemini.'}
                             </p>
                         </div>
 
                         {!isActive ? (
                             <button 
                                 onClick={startSession}
-                                className="bg-indigo-600 text-white px-8 py-3 rounded-full font-medium shadow-lg hover:bg-indigo-700 hover:shadow-xl transition-all"
+                                disabled={status === 'connecting'}
+                                className="bg-indigo-600 text-white px-8 py-3 rounded-full font-medium shadow-lg hover:bg-indigo-700 hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                             >
-                                Start Conversation
+                                {status === 'connecting' ? 'Connecting...' : status === 'error' ? 'Try Again' : 'Start Conversation'}
                             </button>
                         ) : (
                             <button 

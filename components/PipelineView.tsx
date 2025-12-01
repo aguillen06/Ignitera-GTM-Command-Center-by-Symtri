@@ -3,6 +3,7 @@ import React from 'react';
 import { Lead, LEAD_STAGES, LeadStage } from '../types';
 import { supabase } from '../services/supabase';
 import { AlertCircle, ArrowRight } from 'lucide-react';
+import { useToast } from './Toast';
 
 interface PipelineViewProps {
   leads: Lead[];
@@ -11,19 +12,28 @@ interface PipelineViewProps {
 }
 
 const PipelineView: React.FC<PipelineViewProps> = ({ leads, onLeadClick, onLeadUpdate }) => {
+  const { showSuccess, showError } = useToast();
   
   const handleDrop = async (e: React.DragEvent, newStage: LeadStage) => {
     e.preventDefault();
     const leadId = e.dataTransfer.getData("leadId");
     if (!leadId) return;
 
-    const { error } = await supabase
-      .from('leads')
-      .update({ stage: newStage })
-      .eq('id', leadId);
-    
-    if (!error) {
-        onLeadUpdate();
+    try {
+      const { error } = await supabase
+        .from('leads')
+        .update({ stage: newStage })
+        .eq('id', leadId);
+      
+      if (error) {
+        throw error;
+      }
+      
+      onLeadUpdate();
+      showSuccess('Stage Updated', `Lead moved to ${newStage}.`);
+    } catch (error: any) {
+      console.error('[handleDrop] Error:', error);
+      showError('Update Failed', error.message || 'Failed to update lead stage.');
     }
   };
 
