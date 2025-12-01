@@ -80,7 +80,7 @@ const App = () => {
     const notes = formData.get('notes') as string;
 
     const { data, error } = await supabase.from('startups').insert([{
-        name, website, direction, notes
+        name, website, direction, notes, user_id: session?.user?.id
     }]).select().single();
 
     if (data) {
