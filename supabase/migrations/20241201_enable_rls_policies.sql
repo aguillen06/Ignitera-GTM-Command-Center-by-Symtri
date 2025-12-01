@@ -3,10 +3,6 @@
 -- ============================================================================
 -- This migration enables Row Level Security for all application tables.
 -- 
--- IMPORTANT: Before running this migration, ensure that the 'startups' table
--- has a 'user_id' column of type UUID that references auth.users(id).
--- If it doesn't exist, uncomment and run the ALTER TABLE statement below.
---
 -- Security Model:
 -- - startups: Users can only access their own startups (based on user_id)
 -- - leads: Users can only access leads belonging to their startups
@@ -15,13 +11,30 @@
 -- ============================================================================
 
 -- ============================================================================
--- PREREQUISITE: Add user_id column to startups table (if not exists)
+-- PREREQUISITE: Add user_id column to startups table
 -- ============================================================================
--- If your startups table doesn't have a user_id column, run this first:
---
--- ALTER TABLE startups ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES auth.users(id);
--- UPDATE startups SET user_id = auth.uid() WHERE user_id IS NULL;
--- ALTER TABLE startups ALTER COLUMN user_id SET NOT NULL;
+-- This step adds the user_id column if it doesn't exist.
+-- If you have existing data, you may need to manually assign user_ids.
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'startups' AND column_name = 'user_id'
+    ) THEN
+        ALTER TABLE startups ADD COLUMN user_id UUID REFERENCES auth.users(id);
+    END IF;
+END $$;
+
+-- ============================================================================
+-- PERFORMANCE: Add indexes for RLS policy optimization
+-- ============================================================================
+-- These indexes improve performance for the EXISTS subqueries in RLS policies
+
+CREATE INDEX IF NOT EXISTS idx_startups_user_id ON startups(user_id);
+CREATE INDEX IF NOT EXISTS idx_leads_startup_id ON leads(startup_id);
+CREATE INDEX IF NOT EXISTS idx_icp_profiles_startup_id ON icp_profiles(startup_id);
+CREATE INDEX IF NOT EXISTS idx_activities_lead_id ON activities(lead_id);
 
 -- ============================================================================
 -- STARTUPS TABLE - RLS Policies

@@ -27,17 +27,22 @@ This application uses Supabase Row Level Security to ensure data isolation betwe
 
 #### Prerequisites
 
-Before applying the RLS migration, ensure your `startups` table has a `user_id` column:
+The migration automatically handles adding the `user_id` column to the `startups` table if it doesn't exist. However, if you have existing data, you may need to manually assign user IDs:
 
 ```sql
-ALTER TABLE startups ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES auth.users(id);
-UPDATE startups SET user_id = auth.uid() WHERE user_id IS NULL;
-ALTER TABLE startups ALTER COLUMN user_id SET NOT NULL;
+-- If you have existing startups without user_id, assign them to a specific user:
+UPDATE startups SET user_id = 'your-user-uuid-here' WHERE user_id IS NULL;
 ```
 
 #### Applying RLS Policies
 
 Run the migration file located at `supabase/migrations/20241201_enable_rls_policies.sql` in your Supabase SQL Editor or via the Supabase CLI.
+
+The migration will:
+1. Add `user_id` column to startups table (if not exists)
+2. Create indexes for optimized RLS policy performance
+3. Enable RLS on all tables
+4. Create CRUD policies for each table
 
 #### Tables and Policies Overview
 

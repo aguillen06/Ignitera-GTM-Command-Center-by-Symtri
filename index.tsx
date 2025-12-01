@@ -73,6 +73,13 @@ const App = () => {
 
   const handleCreateStartup = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    
+    // Validate user is authenticated before creating startup
+    if (!session?.user?.id) {
+      alert('You must be logged in to create a startup.');
+      return;
+    }
+    
     const formData = new FormData(e.currentTarget);
     const name = formData.get('name') as string;
     const website = formData.get('website') as string;
@@ -80,7 +87,7 @@ const App = () => {
     const notes = formData.get('notes') as string;
 
     const { data, error } = await supabase.from('startups').insert([{
-        name, website, direction, notes, user_id: session?.user?.id
+        name, website, direction, notes, user_id: session.user.id
     }]).select().single();
 
     if (data) {
