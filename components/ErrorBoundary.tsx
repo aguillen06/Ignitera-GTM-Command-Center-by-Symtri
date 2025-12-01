@@ -32,8 +32,8 @@ class ErrorBoundary extends Component<Props, State> {
     this.setState({ hasError: false, error: null, errorInfo: null });
   };
 
-  handleGoHome = (): void => {
-    window.location.href = '/';
+  handleReload = (): void => {
+    window.location.reload();
   };
 
   render(): ReactNode {
@@ -80,10 +80,10 @@ class ErrorBoundary extends Component<Props, State> {
                 <RefreshCw className="w-4 h-4" /> Try Again
               </button>
               <button
-                onClick={this.handleGoHome}
+                onClick={this.handleReload}
                 className="flex items-center gap-2 px-4 py-2 bg-slate-100 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-200 transition-colors"
               >
-                <Home className="w-4 h-4" /> Go Home
+                <Home className="w-4 h-4" /> Reload App
               </button>
             </div>
           </div>

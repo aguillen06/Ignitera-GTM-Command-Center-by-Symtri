@@ -24,7 +24,10 @@ interface ToastContextValue {
 
 const ToastContext = createContext<ToastContextValue | undefined>(undefined);
 
-let toastId = 0;
+// Generate unique IDs using timestamp + random for robustness
+const generateToastId = (): string => {
+  return `toast-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+};
 
 export const ToastProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -34,7 +37,7 @@ export const ToastProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   }, []);
 
   const showToast = useCallback((toast: Omit<Toast, 'id'>) => {
-    const id = `toast-${++toastId}`;
+    const id = generateToastId();
     const newToast: Toast = { ...toast, id };
     
     setToasts((prev) => [...prev, newToast]);

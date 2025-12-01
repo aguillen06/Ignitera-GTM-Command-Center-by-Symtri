@@ -37,6 +37,9 @@ const AppContent = () => {
   
   // Quick Capture State
   const [showQuickCapture, setShowQuickCapture] = useState(false);
+  
+  // Auth error state (for handling auth errors during initial load)
+  const [authError, setAuthError] = useState<string | null>(null);
 
   // App Initialization & Auth Check
   useEffect(() => {
@@ -44,7 +47,7 @@ const AppContent = () => {
       setSession(session);
     }).catch((error) => {
       console.error('[Auth] Session check failed:', error);
-      showError('Authentication Error', 'Failed to check login status. Please refresh the page.');
+      setAuthError(error.message || 'Failed to check login status. Please refresh the page.');
     });
 
     const {
@@ -55,6 +58,14 @@ const AppContent = () => {
 
     return () => subscription.unsubscribe();
   }, []);
+  
+  // Show auth error as toast once toast provider is ready
+  useEffect(() => {
+    if (authError) {
+      showError('Authentication Error', authError);
+      setAuthError(null);
+    }
+  }, [authError, showError]);
 
   useEffect(() => {
     if (session) {
