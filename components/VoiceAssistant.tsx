@@ -1,5 +1,5 @@
 
-import React, { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Mic, MicOff, X, Volume2, Sparkles } from 'lucide-react';
 import { getLiveClient } from '../services/gemini';
 import { LiveServerMessage, Modality } from '@google/genai';
@@ -131,9 +131,9 @@ const VoiceAssistant = () => {
             // 1. Handle Tool Calls (The "Smart" Part)
             if (message.toolCall) {
                 console.log("Tool Call received:", message.toolCall);
-                const functionResponses = [];
+                const functionResponses: any[] = [];
 
-                for (const fc of message.toolCall.functionCalls) {
+                for (const fc of message.toolCall.functionCalls || []) {
                     setToolActivity(`Using tool: ${fc.name}...`);
                     
                     // Execute the tool logic

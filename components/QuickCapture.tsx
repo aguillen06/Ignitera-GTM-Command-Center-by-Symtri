@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { X, Clipboard, ArrowRight, Check, Loader2 } from 'lucide-react';
 import { parseLeadFromText } from '../services/gemini';
 import { Lead } from '../types';

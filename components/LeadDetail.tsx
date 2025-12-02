@@ -23,7 +23,7 @@ const LeadDetail: React.FC<LeadDetailProps> = ({ lead, startup, icp, onClose, on
   const [activeTab, setActiveTab] = useState<'details' | 'outbound' | 'activities'>('details');
 
   // Draft State
-  const [draft, setDraft] = useState<{subject?: string, body: string, type: 'email'|'linkedin'} | null>(lead.active_draft || null);
+  const [draft, setDraft] = useState<{subject?: string, body: string, type: 'email'|'linkedin', generated_at?: string} | null>(lead.active_draft || null);
   const [isWritingDraft, setIsWritingDraft] = useState(false);
 
   useEffect(() => {

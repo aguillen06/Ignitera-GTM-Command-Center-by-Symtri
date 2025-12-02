@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { Startup, ICPProfile } from '../types';
 import { supabase } from '../services/supabase';
 import { searchMarketAnalysis, generateDeepStrategy, generateBooleanSearch } from '../services/gemini';
-import { Loader2, Save, CheckCircle, AlertTriangle, Globe, BrainCircuit, XCircle, Search, Copy, Target, MessageSquare, Briefcase, Zap } from 'lucide-react';
+import { Loader2, Save, CheckCircle, AlertTriangle, Globe, BrainCircuit, XCircle, Search, Copy, Target, MessageSquare, Zap } from 'lucide-react';
 
 interface ICPGeneratorProps {
   startup: Startup;

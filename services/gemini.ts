@@ -60,7 +60,8 @@ export const searchMarketAnalysis = async (
     return { text, sources };
   } catch (error) {
     console.error("Market Search Error:", error);
-    throw error;
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+    throw new Error(`Failed to search market analysis: ${errorMessage}`);
   }
 };
 
@@ -104,12 +105,14 @@ export const generateDeepStrategy = async (
     return JSON.parse(cleanJson(response.text || "{}"));
   } catch (error) {
     console.error("Deep Strategy Error:", error);
-    throw error;
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+    throw new Error(`Failed to generate GTM strategy: ${errorMessage}`);
   }
 };
 
 // --- 3. Boolean Search Strings ---
 export const generateBooleanSearch = async (icp: ICPProfile): Promise<string[]> => {
+  try {
     const prompt = `
         Based on this ICP, generate 5 Boolean Search Strings for LinkedIn Sales Navigator.
         ICP Persona: ${JSON.stringify(icp.icp_persona)}
@@ -126,10 +129,16 @@ export const generateBooleanSearch = async (icp: ICPProfile): Promise<string[]> 
     });
 
     return JSON.parse(cleanJson(response.text || "[]"));
+  } catch (error) {
+    console.error("Boolean Search Generation Error:", error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+    throw new Error(`Failed to generate boolean search strings: ${errorMessage}`);
+  }
 };
 
 // --- 4. Auto-Prospecting (Search) ---
 export const findProspects = async (icp: ICPProfile): Promise<Partial<Lead>[]> => {
+  try {
     const prompt = `
         Find 5 real companies in ${icp.region} that match this ICP:
         Segment: ${icp.key_segments}
@@ -151,10 +160,16 @@ export const findProspects = async (icp: ICPProfile): Promise<Partial<Lead>[]> =
 
     const raw = JSON.parse(cleanJson(response.text || "[]"));
     return Array.isArray(raw) ? raw : [];
+  } catch (error) {
+    console.error("Prospect Finding Error:", error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+    throw new Error(`Failed to find prospects: ${errorMessage}`);
+  }
 };
 
 // --- 5. Lead Enrichment (AI Insights) ---
 export const enrichLead = async (lead: Lead, startup: Startup, icp: ICPProfile | null): Promise<Partial<Lead>> => {
+  try {
     const prompt = `
         Generate sales insights for this lead:
         Lead: ${lead.contact_name}, ${lead.title} at ${lead.company_name}
@@ -171,10 +186,16 @@ export const enrichLead = async (lead: Lead, startup: Startup, icp: ICPProfile |
     });
 
     return JSON.parse(cleanJson(response.text || "{}"));
+  } catch (error) {
+    console.error("Lead Enrichment Error:", error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+    throw new Error(`Failed to enrich lead: ${errorMessage}`);
+  }
 };
 
 // --- 6. Live Enrichment (Google Search) ---
 export const enrichLeadWithLiveSearch = async (lead: Lead): Promise<Partial<Lead>> => {
+  try {
     const query = `
         Find recent news, funding status, tech stack, and active hiring roles for ${lead.company_name}.
         Return a valid JSON object with keys: funding_status, tech_stack (array of strings), recent_news, hiring_trends, account_summary.
@@ -191,10 +212,16 @@ export const enrichLeadWithLiveSearch = async (lead: Lead): Promise<Partial<Lead
     });
 
     return JSON.parse(cleanJson(response.text || "{}"));
+  } catch (error) {
+    console.error("Live Enrichment Error:", error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+    throw new Error(`Failed to enrich lead with live search: ${errorMessage}`);
+  }
 };
 
 // --- 7. Location Verification (Maps) ---
 export const verifyLocation = async (companyName: string, countryHint: string) => {
+  try {
     const prompt = `
         Where is the HQ of ${companyName}? Check if it matches ${countryHint}. 
         Return valid JSON: { "text": "...", "mapLink": "..." }
@@ -211,10 +238,16 @@ export const verifyLocation = async (companyName: string, countryHint: string) =
     });
     
     return JSON.parse(cleanJson(response.text || "{}"));
+  } catch (error) {
+    console.error("Location Verification Error:", error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+    throw new Error(`Failed to verify location: ${errorMessage}`);
+  }
 };
 
 // --- 8. Outbound Writer ---
 export const generateOutboundDraft = async (lead: Lead, startup: Startup, icp: ICPProfile, type: 'email' | 'linkedin') => {
+  try {
     const prompt = `
         Write a ${type} for ${lead.contact_name} at ${lead.company_name}.
         Value Prop: ${icp.value_props}
@@ -229,10 +262,16 @@ export const generateOutboundDraft = async (lead: Lead, startup: Startup, icp: I
     });
 
     return JSON.parse(cleanJson(response.text || "{}"));
+  } catch (error) {
+    console.error("Outbound Draft Generation Error:", error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+    throw new Error(`Failed to generate ${type} draft: ${errorMessage}`);
+  }
 };
 
 // --- 9. Web Clipper Parser ---
 export const parseLeadFromText = async (text: string): Promise<Partial<Lead>> => {
+  try {
     const prompt = `Extract lead info from this text: "${text}". Output JSON matching Lead interface keys.`;
     
     const response = await ai.models.generateContent({
@@ -242,7 +281,15 @@ export const parseLeadFromText = async (text: string): Promise<Partial<Lead>> =>
     });
 
     return JSON.parse(cleanJson(response.text || "{}"));
+  } catch (error) {
+    console.error("Lead Parsing Error:", error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+    throw new Error(`Failed to parse lead from text: ${errorMessage}`);
+  }
 };
 
 // --- 10. Live Client Access ---
 export const getLiveClient = () => ai;
+
+// Export for testing
+export { cleanJson };
