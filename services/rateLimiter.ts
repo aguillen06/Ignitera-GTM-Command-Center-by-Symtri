@@ -75,11 +75,6 @@ export const RATE_LIMIT_CONFIGS: Record<string, RateLimitConfig> = {
     windowMs: 60 * 1000,      // 10 requests per minute
     cooldownMs: 10 * 1000,
   },
-  'gemini:bulk-drafts': {
-    maxRequests: 2,
-    windowMs: 60 * 1000,      // 2 bulk operations per minute
-    cooldownMs: 60 * 1000,    // 1 minute cooldown
-  },
   
   // Supabase calls - Less restrictive but still protected
   'supabase:read': {

@@ -63,12 +63,14 @@ const createRateLimitedBuilder = (originalBuilder: any, operationType: 'read' | 
               const rateLimitResult = checkRateLimit(limitKey);
               
               if (!rateLimitResult.allowed) {
-                // Return a rejected promise with rate limit error
-                return Promise.reject(new RateLimitError(
-                  rateLimitResult.message,
-                  rateLimitResult.retryAfterMs,
-                  limitKey
-                )).then(...args);
+                // Return a function that returns a rejected promise (since .then() expects a function)
+                return (...thenArgs: any[]) => {
+                  return Promise.reject(new RateLimitError(
+                    rateLimitResult.message,
+                    rateLimitResult.retryAfterMs,
+                    limitKey
+                  ));
+                };
               }
               
               return result;
