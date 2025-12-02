@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { X, Clipboard, ArrowRight, Check, Loader2 } from 'lucide-react';
-import { parseLeadFromText } from '../services/gemini';
+import { parseLeadFromText, isRateLimitError } from '../services/gemini';
 import { Lead } from '../types';
 import { useToast } from './Toast';
 
@@ -11,7 +11,7 @@ interface QuickCaptureProps {
 }
 
 const QuickCapture = ({ onClose, onSave }: QuickCaptureProps) => {
-    const { showSuccess, showError } = useToast();
+    const { showSuccess, showError, showWarning } = useToast();
     const [text, setText] = useState('');
     const [isProcessing, setIsProcessing] = useState(false);
     const [parsedData, setParsedData] = useState<Partial<Lead> | null>(null);
@@ -25,7 +25,12 @@ const QuickCapture = ({ onClose, onSave }: QuickCaptureProps) => {
             showSuccess('Text Parsed', 'Lead information has been extracted.');
         } catch (e: any) {
             console.error('[handleProcess] Error:', e);
-            showError('Parsing Failed', e.message || 'Failed to parse text. Please try again.');
+            // Handle rate limit errors with a more helpful message
+            if (isRateLimitError(e)) {
+              showWarning('Rate Limit Reached', e.message || 'Please wait a moment before trying again.');
+            } else {
+              showError('Parsing Failed', e.message || 'Failed to parse text. Please try again.');
+            }
         } finally {
             setIsProcessing(false);
         }

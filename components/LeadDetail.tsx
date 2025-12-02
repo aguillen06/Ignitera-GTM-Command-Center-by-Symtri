@@ -3,8 +3,8 @@ import React, { useState, useEffect } from 'react';
 import { Lead, Startup, ICPProfile, Activity } from '../types';
 import { X, Wand2, User, Building, MapPin, Briefcase, Check, ExternalLink, Send, MessageSquare, Mail, RefreshCw, Zap, TrendingUp, Cpu, Newspaper, Users } from 'lucide-react';
 import ActivityLog from './ActivityLog';
-import { supabase } from '../services/supabase';
-import { enrichLead, verifyLocation, generateOutboundDraft, enrichLeadWithLiveSearch } from '../services/gemini';
+import { supabase, isRateLimitError } from '../services/supabase';
+import { enrichLead, verifyLocation, generateOutboundDraft, enrichLeadWithLiveSearch, isRateLimitError as isGeminiRateLimitError } from '../services/gemini';
 import { useToast } from './Toast';
 
 interface LeadDetailProps {
@@ -102,7 +102,12 @@ const LeadDetail: React.FC<LeadDetailProps> = ({ lead, startup, icp, onClose, on
         }
     } catch (e: any) {
         console.error('[handleEnrich] Error:', e);
-        showError('Enrichment Failed', e.message || 'Failed to generate AI insights.');
+        // Handle rate limit errors with a more helpful message
+        if (isGeminiRateLimitError(e) || isRateLimitError(e)) {
+          showWarning('Rate Limit Reached', e.message || 'Please wait a moment before trying again.');
+        } else {
+          showError('Enrichment Failed', e.message || 'Failed to generate AI insights.');
+        }
     } finally {
         setIsGenerating(false);
     }
@@ -128,7 +133,12 @@ const LeadDetail: React.FC<LeadDetailProps> = ({ lead, startup, icp, onClose, on
         }
     } catch (e: any) {
         console.error('[handleLiveEnrich] Error:', e);
-        showError('Live Enrichment Failed', e.message || 'Failed to perform live enrichment.');
+        // Handle rate limit errors with a more helpful message
+        if (isGeminiRateLimitError(e) || isRateLimitError(e)) {
+          showWarning('Rate Limit Reached', e.message || 'Please wait a moment before trying again.');
+        } else {
+          showError('Live Enrichment Failed', e.message || 'Failed to perform live enrichment.');
+        }
     } finally {
         setIsLiveEnriching(false);
     }
@@ -142,7 +152,12 @@ const LeadDetail: React.FC<LeadDetailProps> = ({ lead, startup, icp, onClose, on
         setLocationData(result);
     } catch (e: any) {
         console.error('[handleVerifyLocation] Error:', e);
-        showError('Location Verification Failed', e.message || 'Could not verify the location.');
+        // Handle rate limit errors with a more helpful message
+        if (isGeminiRateLimitError(e) || isRateLimitError(e)) {
+          showWarning('Rate Limit Reached', e.message || 'Please wait a moment before trying again.');
+        } else {
+          showError('Location Verification Failed', e.message || 'Could not verify the location.');
+        }
     } finally {
         setIsVerifyingLocation(false);
     }
@@ -172,7 +187,12 @@ const LeadDetail: React.FC<LeadDetailProps> = ({ lead, startup, icp, onClose, on
         
     } catch (e: any) {
         console.error('[handleGenerateDraft] Error:', e);
-        showError('Draft Generation Failed', e.message || 'Failed to generate draft.');
+        // Handle rate limit errors with a more helpful message
+        if (isGeminiRateLimitError(e) || isRateLimitError(e)) {
+          showWarning('Rate Limit Reached', e.message || 'Please wait a moment before trying again.');
+        } else {
+          showError('Draft Generation Failed', e.message || 'Failed to generate draft.');
+        }
     } finally {
         setIsWritingDraft(false);
     }

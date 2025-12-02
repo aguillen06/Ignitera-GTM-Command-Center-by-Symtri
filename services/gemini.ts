@@ -1,8 +1,20 @@
 import { GoogleGenAI, Type, Schema } from "@google/genai";
 import { ICPProfile, Lead, Startup } from "../types";
+import { checkRateLimit, RateLimitError, isRateLimitError } from "./rateLimiter";
+
+// Re-export rate limit utilities for use in components
+export { RateLimitError, isRateLimitError } from "./rateLimiter";
 
 // NOTE: Expects process.env.API_KEY to be populated
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+
+// Helper to check rate limit and throw if exceeded
+const enforceRateLimit = (actionType: string): void => {
+  const result = checkRateLimit(actionType);
+  if (!result.allowed) {
+    throw new RateLimitError(result.message, result.retryAfterMs, actionType);
+  }
+};
 
 // --- GTM Command Center Persona ---
 const GTM_SYSTEM_INSTRUCTION = `
@@ -35,6 +47,9 @@ const cleanJson = (text: string): string => {
 export const searchMarketAnalysis = async (
   query: string
 ): Promise<{ text: string; sources: { title: string; uri: string }[] }> => {
+  // Rate limit check for market research
+  enforceRateLimit('gemini:market-research');
+  
   try {
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
@@ -73,6 +88,9 @@ export const generateDeepStrategy = async (
   productDescription: string,
   direction?: 'FRANCE_TO_US' | 'US_TO_FRANCE' | 'OTHER'
 ): Promise<Partial<ICPProfile>> => {
+  // Rate limit check for deep strategy (most expensive)
+  enforceRateLimit('gemini:deep-strategy');
+  
   try {
     const directionContext = direction === 'FRANCE_TO_US' ? "Expanding from France/Europe TO the USA." :
                              direction === 'US_TO_FRANCE' ? "Expanding from USA TO France/Europe." :
@@ -110,6 +128,9 @@ export const generateDeepStrategy = async (
 
 // --- 3. Boolean Search Strings ---
 export const generateBooleanSearch = async (icp: ICPProfile): Promise<string[]> => {
+    // Rate limit check for boolean search generation
+    enforceRateLimit('gemini:boolean-search');
+    
     const prompt = `
         Based on this ICP, generate 5 Boolean Search Strings for LinkedIn Sales Navigator.
         ICP Persona: ${JSON.stringify(icp.icp_persona)}
@@ -130,6 +151,9 @@ export const generateBooleanSearch = async (icp: ICPProfile): Promise<string[]> 
 
 // --- 4. Auto-Prospecting (Search) ---
 export const findProspects = async (icp: ICPProfile): Promise<Partial<Lead>[]> => {
+    // Rate limit check for auto-prospecting
+    enforceRateLimit('gemini:auto-prospect');
+    
     const prompt = `
         Find 5 real companies in ${icp.region} that match this ICP:
         Segment: ${icp.key_segments}
@@ -155,6 +179,9 @@ export const findProspects = async (icp: ICPProfile): Promise<Partial<Lead>[]> =
 
 // --- 5. Lead Enrichment (AI Insights) ---
 export const enrichLead = async (lead: Lead, startup: Startup, icp: ICPProfile | null): Promise<Partial<Lead>> => {
+    // Rate limit check for lead enrichment
+    enforceRateLimit('gemini:lead-enrichment');
+    
     const prompt = `
         Generate sales insights for this lead:
         Lead: ${lead.contact_name}, ${lead.title} at ${lead.company_name}
@@ -175,6 +202,9 @@ export const enrichLead = async (lead: Lead, startup: Startup, icp: ICPProfile |
 
 // --- 6. Live Enrichment (Google Search) ---
 export const enrichLeadWithLiveSearch = async (lead: Lead): Promise<Partial<Lead>> => {
+    // Rate limit check for live enrichment
+    enforceRateLimit('gemini:live-enrichment');
+    
     const query = `
         Find recent news, funding status, tech stack, and active hiring roles for ${lead.company_name}.
         Return a valid JSON object with keys: funding_status, tech_stack (array of strings), recent_news, hiring_trends, account_summary.
@@ -195,6 +225,9 @@ export const enrichLeadWithLiveSearch = async (lead: Lead): Promise<Partial<Lead
 
 // --- 7. Location Verification (Maps) ---
 export const verifyLocation = async (companyName: string, countryHint: string) => {
+    // Rate limit check for location verification
+    enforceRateLimit('gemini:location-verify');
+    
     const prompt = `
         Where is the HQ of ${companyName}? Check if it matches ${countryHint}. 
         Return valid JSON: { "text": "...", "mapLink": "..." }
@@ -215,6 +248,9 @@ export const verifyLocation = async (companyName: string, countryHint: string) =
 
 // --- 8. Outbound Writer ---
 export const generateOutboundDraft = async (lead: Lead, startup: Startup, icp: ICPProfile, type: 'email' | 'linkedin') => {
+    // Rate limit check for outbound draft generation
+    enforceRateLimit('gemini:outbound-draft');
+    
     const prompt = `
         Write a ${type} for ${lead.contact_name} at ${lead.company_name}.
         Value Prop: ${icp.value_props}
@@ -233,6 +269,9 @@ export const generateOutboundDraft = async (lead: Lead, startup: Startup, icp: I
 
 // --- 9. Web Clipper Parser ---
 export const parseLeadFromText = async (text: string): Promise<Partial<Lead>> => {
+    // Rate limit check for lead text parsing
+    enforceRateLimit('gemini:parse-lead');
+    
     const prompt = `Extract lead info from this text: "${text}". Output JSON matching Lead interface keys.`;
     
     const response = await ai.models.generateContent({
