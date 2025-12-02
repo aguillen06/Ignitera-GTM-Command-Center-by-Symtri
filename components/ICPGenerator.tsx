@@ -1,8 +1,8 @@
 
 import React, { useState, useEffect } from 'react';
 import { Startup, ICPProfile } from '../types';
-import { supabase } from '../services/supabase';
-import { searchMarketAnalysis, generateDeepStrategy, generateBooleanSearch } from '../services/gemini';
+import { supabase, isRateLimitError } from '../services/supabase';
+import { searchMarketAnalysis, generateDeepStrategy, generateBooleanSearch, isRateLimitError as isGeminiRateLimitError } from '../services/gemini';
 import { Loader2, Save, CheckCircle, AlertTriangle, Globe, BrainCircuit, XCircle, Search, Copy, Target, MessageSquare, Briefcase, Zap } from 'lucide-react';
 import { useToast } from './Toast';
 
@@ -11,7 +11,7 @@ interface ICPGeneratorProps {
 }
 
 const ICPGenerator: React.FC<ICPGeneratorProps> = ({ startup }) => {
-  const { showSuccess, showError } = useToast();
+  const { showSuccess, showError, showWarning } = useToast();
   const [profiles, setProfiles] = useState<ICPProfile[]>([]);
   const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
   const [isLoadingProfiles, setIsLoadingProfiles] = useState(false);
@@ -102,7 +102,13 @@ const ICPGenerator: React.FC<ICPGeneratorProps> = ({ startup }) => {
         setGroundingSources(sources);
     } catch (err: any) {
         console.error(err);
-        setErrorMsg(err.message || 'Error during market research. Check console and API Key.');
+        // Handle rate limit errors with a more helpful message
+        if (isGeminiRateLimitError(err) || isRateLimitError(err)) {
+          setErrorMsg(err.message || 'Rate limit exceeded. Please wait a moment before trying again.');
+          showWarning('Rate Limit Reached', err.message || 'Please wait a moment before trying again.');
+        } else {
+          setErrorMsg(err.message || 'Error during market research. Check console and API Key.');
+        }
     } finally {
         setIsResearching(false);
     }
@@ -133,7 +139,13 @@ const ICPGenerator: React.FC<ICPGeneratorProps> = ({ startup }) => {
         });
     } catch (err: any) {
         console.error(err);
-        setErrorMsg(err.message || 'Error generating deep strategy. Check console and API Key.');
+        // Handle rate limit errors with a more helpful message
+        if (isGeminiRateLimitError(err) || isRateLimitError(err)) {
+          setErrorMsg(err.message || 'Rate limit exceeded. Please wait a moment before trying again.');
+          showWarning('Rate Limit Reached', err.message || 'Please wait a moment before trying again.');
+        } else {
+          setErrorMsg(err.message || 'Error generating deep strategy. Check console and API Key.');
+        }
     } finally {
         setIsThinking(false);
     }
@@ -183,8 +195,14 @@ const ICPGenerator: React.FC<ICPGeneratorProps> = ({ startup }) => {
       }
     } catch (error: any) {
       console.error('[handleSave] Error:', error);
-      setErrorMsg(error.message || 'Failed to save profile to database.');
-      showError('Save Failed', error.message || 'Unable to save the profile. Please try again.');
+      // Handle rate limit errors
+      if (isGeminiRateLimitError(error) || isRateLimitError(error)) {
+        setErrorMsg(error.message || 'Rate limit exceeded. Please wait a moment before trying again.');
+        showWarning('Rate Limit Reached', error.message || 'Please wait a moment before trying again.');
+      } else {
+        setErrorMsg(error.message || 'Failed to save profile to database.');
+        showError('Save Failed', error.message || 'Unable to save the profile. Please try again.');
+      }
     } finally {
       setIsSaving(false);
     }
@@ -203,7 +221,12 @@ const ICPGenerator: React.FC<ICPGeneratorProps> = ({ startup }) => {
         }
     } catch (e: any) {
         console.error('[handleGetQueries] Error:', e);
-        showError('Query Generation Failed', e.message || 'Failed to generate search queries.');
+        // Handle rate limit errors with a more helpful message
+        if (isGeminiRateLimitError(e) || isRateLimitError(e)) {
+          showWarning('Rate Limit Reached', e.message || 'Please wait a moment before trying again.');
+        } else {
+          showError('Query Generation Failed', e.message || 'Failed to generate search queries.');
+        }
     } finally {
         setIsGeneratingQueries(false);
     }

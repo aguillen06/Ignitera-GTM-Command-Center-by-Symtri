@@ -2,8 +2,8 @@
 import React, { useState, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Startup, Lead, LeadStage, LEAD_STAGES, ICPProfile } from './types';
-import { supabase } from './services/supabase';
-import { findProspects, generateOutboundDraft } from './services/gemini';
+import { supabase, isRateLimitError } from './services/supabase';
+import { findProspects, generateOutboundDraft, isRateLimitError as isGeminiRateLimitError } from './services/gemini';
 import { Plus, ArrowRight, Layout, Users, PieChart, Globe, Search, Filter, ChevronLeft, Sparkles, Loader2, Zap, Clipboard, Trash2, Command, Hexagon, LogOut } from 'lucide-react';
 
 // Components
@@ -255,7 +255,12 @@ const AppContent = () => {
 
     } catch (e: any) {
         console.error('[handleAutoProspect] Error:', e);
-        showError('Auto-Prospect Failed', e.message || 'Check API limits and try again.');
+        // Handle rate limit errors with a more helpful message
+        if (isGeminiRateLimitError(e) || isRateLimitError(e)) {
+          showWarning('Rate Limit Reached', e.message || 'Please wait a moment before trying again.');
+        } else {
+          showError('Auto-Prospect Failed', e.message || 'Check API limits and try again.');
+        }
     } finally {
         setIsAutoProspecting(false);
     }
@@ -287,6 +292,8 @@ const AppContent = () => {
 
         let count = 0;
         let errorCount = 0;
+        let rateLimitHit = false;
+        
         for (const lead of prospects) {
             try {
                 const draft = await generateOutboundDraft(lead, selectedStartup, activeICP, 'email');
@@ -301,20 +308,33 @@ const AppContent = () => {
                 
                 setLeads(current => current.map(l => l.id === lead.id ? { ...l, active_draft } : l));
                 count++;
-            } catch(e) { 
-              console.error('[handleBulkDrafts] Draft generation error:', e); 
+            } catch(e: any) { 
+              console.error('[handleBulkDrafts] Draft generation error:', e);
+              // Check if this is a rate limit error
+              if (isGeminiRateLimitError(e) || isRateLimitError(e)) {
+                rateLimitHit = true;
+                showWarning('Rate Limit Reached', `Generated ${count} drafts before hitting rate limit. ${e.message || 'Please wait before continuing.'}`);
+                break; // Stop processing more leads
+              }
               errorCount++;
             }
         }
         
-        if (errorCount > 0) {
-          showWarning('Drafts Generated with Errors', `Generated ${count} drafts. ${errorCount} failed.`);
-        } else {
-          showSuccess('Drafts Generated', `Successfully generated drafts for ${count} leads.`);
+        if (!rateLimitHit) {
+          if (errorCount > 0) {
+            showWarning('Drafts Generated with Errors', `Generated ${count} drafts. ${errorCount} failed.`);
+          } else {
+            showSuccess('Drafts Generated', `Successfully generated drafts for ${count} leads.`);
+          }
         }
       } catch (error: any) {
         console.error('[handleBulkDrafts] Error:', error);
-        showError('Failed to Generate Drafts', error.message || 'Please try again.');
+        // Handle rate limit errors with a more helpful message
+        if (isGeminiRateLimitError(error) || isRateLimitError(error)) {
+          showWarning('Rate Limit Reached', error.message || 'Please wait a moment before trying again.');
+        } else {
+          showError('Failed to Generate Drafts', error.message || 'Please try again.');
+        }
       }
   };
 
